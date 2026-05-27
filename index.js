@@ -54,60 +54,39 @@ function buildEmbed(data, vaName, range) {
     if (code) countryRows.push({ code, count, isGood });
   }
 
-  const badClicks  = totalClicks - goodClicks;
-  const goodPct    = totalClicks ? Math.round((goodClicks / totalClicks) * 100) : 0;
-  const badPct     = totalClicks ? 100 - goodPct : 0;
-  const quality    = qualityLabel(goodPct);
-
-  // Seuil de paiement
-  const { thresholdClicks, amountOnThreshold } = config.payment;
-  const remaining  = Math.max(0, thresholdClicks - goodClicks);
-  const amount     = goodClicks >= thresholdClicks ? amountOnThreshold : 0;
-
-  // Tri pays par count desc, top 6
+  // Tri pays par count desc, top 10
   countryRows.sort((a, b) => b.count - a.count);
-  const topCountries = countryRows.slice(0, 6);
+  const topCountries = countryRows.slice(0, 10);
 
   // Titre & date
   let title = `📊 Stats — ${rangeLabel(range)}`;
   let dateStr = '';
-  let paymentLine = '';
 
   if (cycle) {
     title = '📊 Stats du cycle en cours';
     dateStr = `📅 ${formatDate(cycle.start)} → ${formatDate(cycle.end)} (${cycle.dayInCycle}/${cycle.totalDays}j)\n`;
-    paymentLine = `\n📅 **Paiement prévu :** ${formatDate(cycle.paymentDate)} (le lendemain du dernier jour du cycle)`;
   }
 
   // Description
   const paysBlock = topCountries.length
     ? topCountries.map(r => {
         const pct = totalClicks ? Math.round((r.count / totalClicks) * 100) : 0;
-        return `${FLAG(r.code)} ${r.code} – ${r.count} (${pct}%) ${r.isGood ? '🟢' : '🔴'}`;
+        return `${FLAG(r.code)} ${r.code} – ${r.count} (${pct}%)`;
       }).join('\n')
     : '_Aucune donnée_';
 
   const description = [
     dateStr,
-    `• **Bons clics :** ${goodClicks} (${goodPct}%)`,
-    `• **Mauvais clics :** ${badClicks} (${badPct}%)`,
-    `• **Qualité :** ${quality} (${goodPct}% bons)`,
+    `👆 **Total clics : ${totalClicks}**`,
     '',
-    '🌍 **Classement pays :**',
+    '🌍 **Répartition par pays :**',
     paysBlock,
-    '',
-    `💰 **Clics payables :** ${goodClicks}`,
-    `💵 **Montant actuel :** ${amount}$`,
-    remaining > 0
-      ? `📈 **Encore ${remaining} clics payables pour débloquer ${amountOnThreshold}$**`
-      : `✅ **Seuil atteint ! Paiement de ${amountOnThreshold}$ débloqué**`,
-    paymentLine,
   ].filter(l => l !== undefined).join('\n');
 
   return new EmbedBuilder()
     .setTitle(title)
     .setDescription(description)
-    .setColor(goodPct >= 90 ? 0x5865F2 : goodPct >= 75 ? 0x57F287 : goodPct >= 50 ? 0xFEE75C : 0xED4245)
+    .setColor(0x5865F2)
     .setFooter({ text: `VA : ${vaName}` })
     .setTimestamp();
 }
