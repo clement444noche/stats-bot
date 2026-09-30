@@ -22,18 +22,42 @@ function keyDiagnostic() {
   ].filter(Boolean).join(', ');
 }
 
+// Limite GAML : 60 requêtes/minute par clé → une requête toutes les 1,1 s max
+const MIN_INTERVAL_MS = 1100;
+const MAX_RETRIES = 3;
+let nextSlot = 0;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function throttle() {
+  const now = Date.now();
+  const wait = Math.max(0, nextSlot - now);
+  nextSlot = Math.max(now, nextSlot) + MIN_INTERVAL_MS;
+  if (wait) await sleep(wait);
+}
+
 async function fetchGAML(endpoint, params = {}) {
   const url = new URL(`${BASE_URL}${endpoint}`);
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== null) url.searchParams.set(k, v);
   }
 
-  const res = await fetch(url.toString(), {
-    headers: {
-      'X-Api-Key': apiKey(),
-      'Accept': 'application/json',
-    },
-  });
+  let res;
+  for (let attempt = 0; ; attempt++) {
+    await throttle();
+    res = await fetch(url.toString(), {
+      headers: {
+        'X-Api-Key': apiKey(),
+        'Accept': 'application/json',
+      },
+    });
+    if (res.status !== 429 || attempt >= MAX_RETRIES) break;
+
+    // Limite atteinte : on attend le délai indiqué par GAML puis on réessaie
+    const reset = Number(res.headers.get('X-RateLimit-Reset'));
+    const waitMs = Number.isFinite(reset) && reset > 0 ? Math.min(reset * 1000, 60000) : 15000;
+    console.warn(`[GAML] Limite atteinte, nouvel essai dans ${Math.round(waitMs / 1000)} s`);
+    await sleep(waitMs);
+  }
 
   if (!res.ok) {
     const text = await res.text();
