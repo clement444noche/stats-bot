@@ -1,5 +1,6 @@
 // =============================================
-//   index.js — Bot Discord : rapport quotidien des clics GAML
+//   index.js — Bot Discord : rapports quotidiens des clics
+//   GetAllMyLinks (VAs Insta) et GetMySocial (VAs Twitter)
 // =============================================
 
 require('dotenv').config();
@@ -7,7 +8,7 @@ const {
   Client, GatewayIntentBits, EmbedBuilder, Events, PermissionsBitField,
 } = require('discord.js');
 const cron = require('node-cron');
-const { getLinks, getYesterdayClicks } = require('./gaml');
+const gaml = require('./gaml');
 const gms = require('./gms');
 
 // ── Label "Hier (29 sept.)" en heure de Paris ────────────────────────────────
@@ -16,33 +17,27 @@ function yesterdayLabel() {
   return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', timeZone: 'Europe/Paris' });
 }
 
-// ── Rapport quotidien automatique ────────────────────────────────────────────
-async function sendDailyReport(client) {
-  const channelId = process.env.REPORT_CHANNEL_ID;
+// ── Clics par VA → message Discord ───────────────────────────────────────────
+// entries : [{ va, clicks }] avec clicks = null si erreur pour ce lien
+async function postReport(client, channelId, title, entries) {
   if (!channelId) {
-    console.warn('[Daily Report] REPORT_CHANNEL_ID non défini, rapport annulé.');
+    console.warn(`[${title}] Salon non défini, rapport annulé.`);
     return;
   }
 
   const channel = await client.channels.fetch(channelId).catch(() => null);
   if (!channel) {
-    console.error('[Daily Report] Salon introuvable :', channelId);
+    console.error(`[${title}] Salon introuvable :`, channelId);
     return;
   }
 
-  const links = await getLinks();
-
   // Clics additionnés par VA (un VA peut avoir plusieurs liens)
   const byVA = new Map();
-  for (const link of links) {
-    const name = link.va ?? '❓ Sans VA';
+  for (const { va, clicks } of entries) {
+    const name = va ?? '❓ Sans VA';
     const entry = byVA.get(name) ?? { name, clicks: 0, errors: 0 };
-    try {
-      entry.clicks += await getYesterdayClicks(link.id);
-    } catch (err) {
-      console.error(`[Daily Report] Erreur pour ${name} (${link.label}):`, err.message);
-      entry.errors++;
-    }
+    if (clicks === null) entry.errors++;
+    else entry.clicks += clicks;
     byVA.set(name, entry);
   }
 
@@ -67,14 +62,38 @@ async function sendDailyReport(client) {
   });
 
   const embed = new EmbedBuilder()
-    .setTitle(`📊 Rapport quotidien — Hier (${yesterdayLabel()})`)
+    .setTitle(`${title} — Hier (${yesterdayLabel()})`)
     .setDescription(lines.join('\n') || '_Aucun lien actif_')
     .setColor(0x57F287)
     .setFooter({ text: `Total équipe : ${teamTotal} clics` })
     .setTimestamp();
 
   await channel.send({ embeds: [embed] });
-  console.log(`[Daily Report] Rapport envoyé — ${teamTotal} clics équipe`);
+  console.log(`[${title}] Rapport envoyé — ${teamTotal} clics équipe`);
+}
+
+// ── Rapport GetAllMyLinks (VAs Insta) → salon #clics ─────────────────────────
+async function sendGamlReport(client) {
+  const links = await gaml.getLinks();
+  const entries = [];
+  for (const link of links) {
+    try {
+      entries.push({ va: link.va, clicks: await gaml.getYesterdayClicks(link.id) });
+    } catch (err) {
+      console.error(`[GAML] Erreur pour ${link.va} (${link.label}):`, err.message);
+      entries.push({ va: link.va, clicks: null });
+    }
+  }
+  await postReport(client, process.env.REPORT_CHANNEL_ID, '📊 Rapport quotidien', entries);
+}
+
+// ── Rapport GetMySocial (VAs Twitter) → salon Twitter ───────────────────────
+async function sendGmsReport(client) {
+  const links = await gms.getLinks();
+  const clicks = await gms.getYesterdayClicks(links.map(l => l.id));
+  // Un lien absent des métriques n'a eu aucune visite hier
+  const entries = links.map(l => ({ va: l.va, clicks: clicks.get(l.id) ?? 0 }));
+  await postReport(client, process.env.GMS_REPORT_CHANNEL_ID, '🐦 Rapport Twitter', entries);
 }
 
 // ── Client Discord ───────────────────────────────────────────────────────────
@@ -90,85 +109,68 @@ client.once(Events.ClientReady, () => {
   console.log(`✅ Bot connecté en tant que ${client.user.tag}`);
   console.log(`📡 Serveurs : ${client.guilds.cache.size}`);
 
-  // ── Cron : rapport quotidien à 8h heure de Paris ────────────────────────
-  cron.schedule('0 8 * * *', () => {
-    console.log('[Cron] Déclenchement du rapport quotidien...');
-    sendDailyReport(client).catch(err =>
-      console.error('[Cron] Erreur rapport quotidien:', err)
-    );
+  // ── Cron : rapports quotidiens à 8h heure de Paris ──────────────────────
+  cron.schedule('0 8 * * *', async () => {
+    console.log('[Cron] Déclenchement des rapports quotidiens...');
+    await sendGamlReport(client).catch(err => console.error('[Cron] Erreur rapport GAML:', err));
+    await sendGmsReport(client).catch(err => console.error('[Cron] Erreur rapport GMS:', err));
   }, {
     timezone: 'Europe/Paris',
   });
 
-  console.log('⏰ Rapport quotidien programmé à 8h (Paris)');
+  console.log('⏰ Rapports quotidiens programmés à 8h (Paris)');
 });
 
-// ── Commande !rapport (admin uniquement, test manuel) ───────────────────────
-client.on(Events.MessageCreate, async (message) => {
-  if (message.author.bot) return;
-  if (message.content !== '!rapport') return;
-  if (!message.member?.permissions.has(PermissionsBitField.Flags.Administrator)) {
-    return message.reply({ content: '❌ Réservé aux admins.' });
-  }
+// ── Commandes admin : !rapport (Insta), !rapport-twitter, !gms-test ─────────
+function isAdmin(message) {
+  return message.member?.permissions.has(PermissionsBitField.Flags.Administrator);
+}
 
-  await message.reply('⏳ Génération du rapport...');
-  try {
-    await sendDailyReport(client);
-  } catch (err) {
-    console.error('[!rapport] Erreur:', err);
-    await message.reply(`❌ Erreur : \`${err.message}\``);
-  }
-});
-
-// ── Commande !gms-test (admin, temporaire) : explore l'API GetMySocial ──────
 function codeBlocks(text) {
   const chunks = [];
   for (let i = 0; i < text.length; i += 1900) chunks.push('```\n' + text.slice(i, i + 1900) + '\n```');
   return chunks;
 }
 
+// Temporaire : montre la réponse brute des stats GetMySocial pour 3 liens
+async function gmsTest(message) {
+  const links = await gms.getLinks();
+  const sample = links.slice(0, 3);
+  const raw = await gms.callTool('get_link_metrics', {
+    link_ids: sample.map(l => l.id), ...gms.yesterdayParams(), limit: 100,
+  });
+  const clicks = await gms.getYesterdayClicks(sample.map(l => l.id));
+
+  const out = `LIENS ACTIFS : ${links.length}\n`
+    + `VAs : ${[...new Set(links.map(l => l.va ?? '❓ Sans VA'))].join(', ')}\n\n`
+    + `CLICS LUS : ${sample.map(l => `${l.va} (${l.label}) = ${clicks.get(l.id) ?? 'absent'}`).join(' | ')}\n\n`
+    + `# get_link_metrics ${JSON.stringify(gms.yesterdayParams())}\n`
+    + JSON.stringify(raw, null, 1).slice(0, 3500);
+
+  for (const chunk of codeBlocks(out).slice(0, 4)) {
+    await message.channel.send(chunk);
+  }
+}
+
+const COMMANDS = {
+  '!rapport': client => sendGamlReport(client),
+  '!rapport-twitter': client => sendGmsReport(client),
+};
+
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot) return;
-  if (message.content !== '!gms-test') return;
-  if (!message.member?.permissions.has(PermissionsBitField.Flags.Administrator)) {
+  const command = message.content.trim();
+  if (!COMMANDS[command] && command !== '!gms-test') return;
+  if (!isAdmin(message)) {
     return message.reply({ content: '❌ Réservé aux admins.' });
   }
 
   try {
-    const tools = await gms.listTools();
-    // 1) Noms des outils seulement
-    let out = `OUTILS : ${tools.map(t => t.name).join(', ')}`;
-
-    // 2) Détail des outils de lecture (liens, stats), sans les créations/modifs
-    const readTools = tools.filter(t =>
-      /link|analytic|stat|click|visit|group/i.test(t.name) &&
-      !/create|update|delete|assign|duplicate|enable|disable/i.test(t.name)
-    );
-    for (const t of readTools) {
-      const props = t.inputSchema?.properties ?? {};
-      const req = t.inputSchema?.required ?? [];
-      const args = Object.entries(props).map(([k, v]) => {
-        const type = v.enum ? v.enum.join('|') : (v.type ?? '?');
-        return `${k}${req.includes(k) ? '*' : ''}:${type}`;
-      }).join(', ');
-      out += `\n\n# ${t.name}(${args})\n${(t.description ?? '').slice(0, 300)}`;
-    }
-
-    // 3) Exemple de lien : un seul, avec ses champs
-    const listTool = tools.find(t => /^list.*link|search.*link/i.test(t.name));
-    if (listTool) {
-      const data = await gms.callTool(listTool.name, {});
-      const items = Array.isArray(data) ? data : (data?.links ?? data?.items ?? data?.data ?? []);
-      const first = Array.isArray(items) ? items[0] : data;
-      out += `\n\n# EXEMPLE ${listTool.name} (${Array.isArray(items) ? items.length : '?'} liens)\n`
-        + JSON.stringify(first, null, 1).slice(0, 2500);
-    }
-
-    for (const chunk of codeBlocks(out).slice(0, 6)) {
-      await message.channel.send(chunk);
-    }
+    if (command === '!gms-test') return await gmsTest(message);
+    await message.reply('⏳ Génération du rapport...');
+    await COMMANDS[command](client);
   } catch (err) {
-    console.error('[!gms-test] Erreur:', err);
+    console.error(`[${command}] Erreur:`, err);
     await message.reply(`❌ Erreur : \`${err.message}\``);
   }
 });

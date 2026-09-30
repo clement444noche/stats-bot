@@ -75,4 +75,79 @@ async function callTool(name, args = {}) {
   try { return JSON.parse(text); } catch { return text; }
 }
 
-module.exports = { connect, listTools, callTool };
+const TIMEZONE = 'Europe/Paris';
+
+// Date d'hier (YYYY-MM-DD) en heure de Paris
+function yesterdayDate() {
+  return new Date(Date.now() - 86400000).toLocaleDateString('en-CA', { timeZone: TIMEZONE });
+}
+
+// Liste d'éléments quelle que soit l'enveloppe de la réponse
+function itemsOf(data) {
+  if (Array.isArray(data)) return data;
+  return data?.data ?? data?.links ?? data?.items ?? data?.results ?? data?.metrics ?? [];
+}
+
+function nextCursorOf(data) {
+  if (Array.isArray(data)) return null;
+  if (data?.has_more === false) return null;
+  return data?.next_cursor ?? data?.cursor ?? data?.pagination?.next_cursor ?? null;
+}
+
+// Tous les liens actifs. Le VA est le display_name du lien (ex. « Vianney »),
+// name_user étant le nom du modèle (ex. « Lola »).
+async function getLinks() {
+  await connect();
+  const links = [];
+  let cursor;
+  for (let page = 0; page < 50; page++) {
+    const data = await callTool('list_links', { limit: 100, ...(cursor ? { cursor } : {}) });
+    links.push(...itemsOf(data));
+    cursor = nextCursorOf(data);
+    if (!cursor) break;
+  }
+  return links
+    .filter(l => !l.status || l.status === 'active')
+    .map(l => ({
+      id: l.id,
+      va: l.display_name?.trim() || l.notes?.trim() || null,
+      label: l.shortcode || l.id,
+    }));
+}
+
+// Premier champ numérique qui porte les clics d'une ligne de métriques
+const CLICK_FIELDS = ['clicks', 'total_clicks', 'visits', 'total_visits', 'views', 'total_views'];
+function clicksOf(row) {
+  for (const f of CLICK_FIELDS) {
+    const v = row?.[f] ?? row?.metrics?.[f] ?? row?.totals?.[f];
+    if (typeof v === 'number') return v;
+  }
+  return null;
+}
+
+// Paramètres communs : la journée d'hier, heure de Paris
+function yesterdayParams() {
+  const d = yesterdayDate();
+  return { start_date: d, end_date: d, timezone: TIMEZONE };
+}
+
+// Clics d'hier pour une liste de liens → Map(linkId → clics)
+async function getYesterdayClicks(linkIds) {
+  const result = new Map();
+  for (let i = 0; i < linkIds.length; i += 50) {
+    const batch = linkIds.slice(i, i + 50);
+    const data = await callTool('get_link_metrics', {
+      link_ids: batch, ...yesterdayParams(), limit: 100,
+    });
+    for (const row of itemsOf(data)) {
+      const id = row.link_id ?? row.id ?? row.link?.id;
+      const clicks = clicksOf(row);
+      if (id && clicks !== null) result.set(id, clicks);
+    }
+  }
+  return result;
+}
+
+module.exports = {
+  connect, listTools, callTool, getLinks, getYesterdayClicks, yesterdayParams,
+};
