@@ -44,13 +44,14 @@ async function fetchGAML(endpoint, params = {}) {
   return res.json();
 }
 
-// Tous les liens actifs du compte, avec le nom du VA
-// (nom du lien, sinon nom du groupe, sinon URL)
+// Tous les liens actifs du compte. Le VA est dans la note du lien
+// (ex. note « Junior »), comme dans le SaaS ; null si pas de note.
 async function getLinks() {
   const links = await fetchGAML('/links', { enabled: true });
   return links.map(link => ({
     id: link.id,
-    name: link.name || link.group?.name || link.url,
+    va: link.note?.trim() || null,
+    label: link.name || link.url,
   }));
 }
 

@@ -30,17 +30,26 @@ async function sendDailyReport(client) {
   }
 
   const links = await getLinks();
-  const results = [];
 
+  // Clics additionnés par VA (un VA peut avoir plusieurs liens)
+  const byVA = new Map();
   for (const link of links) {
+    const name = link.va ?? '❓ Sans VA';
+    const entry = byVA.get(name) ?? { name, clicks: 0, errors: 0 };
     try {
-      const clicks = await getYesterdayClicks(link.id);
-      results.push({ name: link.name, clicks });
+      entry.clicks += await getYesterdayClicks(link.id);
     } catch (err) {
-      console.error(`[Daily Report] Erreur pour ${link.name}:`, err.message);
-      results.push({ name: link.name, clicks: null });
+      console.error(`[Daily Report] Erreur pour ${name} (${link.label}):`, err.message);
+      entry.errors++;
     }
+    byVA.set(name, entry);
   }
+
+  const results = [...byVA.values()].map(e => ({
+    name: e.name,
+    // Tous les liens du VA en erreur → erreur ; sinon on garde ce qui a répondu
+    clicks: e.errors && e.clicks === 0 ? null : e.clicks,
+  }));
 
   // Tri par clics décroissants (les erreurs en bas)
   results.sort((a, b) => {
