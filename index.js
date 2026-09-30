@@ -1,148 +1,70 @@
 // =============================================
-//   index.js — Bot Discord Stats GAML
+//   index.js — Bot Discord : rapport quotidien des clics GAML
 // =============================================
 
 require('dotenv').config();
 const {
-  Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder,
-  ButtonStyle, EmbedBuilder, Events, PermissionsBitField,
+  Client, GatewayIntentBits, EmbedBuilder, Events, PermissionsBitField,
 } = require('discord.js');
-const fs   = require('fs');
-const path = require('path');
-const config = require('./config');
-const { getStats } = require('./gaml');
+const cron = require('node-cron');
+const { getLinks, getYesterdayClicks } = require('./gaml');
 
-// ── Chargement des VAs ──────────────────────────────────────────────────────
-function getVAs() {
-  return JSON.parse(fs.readFileSync(path.join(__dirname, 'vas.json'), 'utf8'));
+// ── Label "Hier (29 sept.)" en heure de Paris ────────────────────────────────
+function yesterdayLabel() {
+  const d = new Date(Date.now() - 86400000);
+  return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', timeZone: 'Europe/Paris' });
 }
 
-// ── Helpers visuels ─────────────────────────────────────────────────────────
-const FLAG = code =>
-  [...code.toUpperCase()].map(c => String.fromCodePoint(c.charCodeAt(0) + 127397)).join('');
-
-function qualityLabel(pct) {
-  for (const { min, label } of config.qualityLabels) {
-    if (pct >= min) return label;
-  }
-  return 'faible ⚠️';
-}
-
-function rangeLabel(range) {
-  return { cycle: 'Cycle', today: "Aujourd'hui", yesterday: 'Hier', '7days': '7 jours', '14days': '14 jours' }[range] ?? range;
-}
-
-function formatDate(isoStr) {
-  const [y, m, d] = isoStr.split('-');
-  return `${d}/${m}/${y}`;
-}
-
-// ── Construction de l'embed ─────────────────────────────────────────────────
-function buildEmbed(data, vaName, range) {
-  const { countries, cycle } = data;
-
-  // Calcul bons/mauvais clics depuis les pays
-  let totalClicks = 0, goodClicks = 0;
-  const countryRows = [];
-
-  for (const row of countries) {
-    const count  = row.totalVisits ?? row.count ?? 0;
-    const code   = (row.country ?? row.countryCode ?? '').toUpperCase();
-    const isGood = config.tier1Countries.includes(code);
-    totalClicks += count;
-    if (isGood) goodClicks += count;
-    if (code) countryRows.push({ code, count, isGood });
+// ── Rapport quotidien automatique ────────────────────────────────────────────
+async function sendDailyReport(client) {
+  const channelId = process.env.REPORT_CHANNEL_ID;
+  if (!channelId) {
+    console.warn('[Daily Report] REPORT_CHANNEL_ID non défini, rapport annulé.');
+    return;
   }
 
-  // Tri pays par count desc, top 10
-  countryRows.sort((a, b) => b.count - a.count);
-  const topCountries = countryRows.slice(0, 10);
-
-  // Titre & date
-  let title = `📊 Stats — ${rangeLabel(range)}`;
-  let dateStr = '';
-
-  if (cycle) {
-    title = '📊 Stats du cycle en cours';
-    dateStr = `📅 ${formatDate(cycle.start)} → ${formatDate(cycle.end)} (${cycle.dayInCycle}/${cycle.totalDays}j)\n`;
+  const channel = await client.channels.fetch(channelId).catch(() => null);
+  if (!channel) {
+    console.error('[Daily Report] Salon introuvable :', channelId);
+    return;
   }
 
-  // Description
-  const paysBlock = topCountries.length
-    ? topCountries.map(r => {
-        const pct = totalClicks ? Math.round((r.count / totalClicks) * 100) : 0;
-        return `${FLAG(r.code)} ${r.code} – ${r.count} (${pct}%)`;
-      }).join('\n')
-    : '_Aucune donnée_';
+  const links = await getLinks();
+  const results = [];
 
-  const description = [
-    dateStr,
-    `👆 **Total clics : ${totalClicks}**`,
-    '',
-    '🌍 **Répartition par pays :**',
-    paysBlock,
-  ].filter(l => l !== undefined).join('\n');
+  for (const link of links) {
+    try {
+      const clicks = await getYesterdayClicks(link.id);
+      results.push({ name: link.name, clicks });
+    } catch (err) {
+      console.error(`[Daily Report] Erreur pour ${link.name}:`, err.message);
+      results.push({ name: link.name, clicks: null });
+    }
+  }
 
-  return new EmbedBuilder()
-    .setTitle(title)
-    .setDescription(description)
-    .setColor(0x5865F2)
-    .setFooter({ text: `VA : ${vaName}` })
+  // Tri par clics décroissants (les erreurs en bas)
+  results.sort((a, b) => {
+    if (a.clicks === null) return 1;
+    if (b.clicks === null) return -1;
+    return b.clicks - a.clicks;
+  });
+
+  const teamTotal = results.reduce((sum, r) => sum + (r.clicks ?? 0), 0);
+
+  const lines = results.map(r => {
+    if (r.clicks === null) return `👤 **${r.name}** → ❌ erreur`;
+    return `👤 **${r.name}** → ${r.clicks} clic${r.clicks !== 1 ? 's' : ''}`;
+  });
+
+  const embed = new EmbedBuilder()
+    .setTitle(`📊 Rapport quotidien — Hier (${yesterdayLabel()})`)
+    .setDescription(lines.join('\n') || '_Aucun lien actif_')
+    .setColor(0x57F287)
+    .setFooter({ text: `Total équipe : ${teamTotal} clics` })
     .setTimestamp();
-}
 
-// ── Construction des boutons ─────────────────────────────────────────────────
-function buildButtons(activeRange) {
-  const ranges = ['cycle', 'today', 'yesterday', '7days', '14days'];
-  const labels = { cycle: 'Cycle', today: "Aujourd'hui", yesterday: 'Hier', '7days': '7 jours', '14days': '14 jours' };
-
-  const row1 = new ActionRowBuilder().addComponents(
-    ...['cycle', 'today', 'yesterday'].map(r =>
-      new ButtonBuilder()
-        .setCustomId(`range_${r}`)
-        .setLabel(labels[r])
-        .setStyle(r === activeRange ? ButtonStyle.Primary : ButtonStyle.Secondary)
-    )
-  );
-
-  const row2 = new ActionRowBuilder().addComponents(
-    ...['7days', '14days'].map(r =>
-      new ButtonBuilder()
-        .setCustomId(`range_${r}`)
-        .setLabel(labels[r])
-        .setStyle(r === activeRange ? ButtonStyle.Primary : ButtonStyle.Secondary)
-    ),
-    new ButtonBuilder()
-      .setCustomId('send_dm')
-      .setLabel('📩 Envoyer en DM')
-      .setStyle(ButtonStyle.Success)
-  );
-
-  return [row1, row2];
-}
-
-// ── Affichage des stats ──────────────────────────────────────────────────────
-async function showStats(interaction, va, range, editReply = false) {
-  try {
-    const data = await getStats(va.linkId, range, config.cycle);
-    const embed = buildEmbed(data, va.name, range);
-    const rows  = buildButtons(range);
-    const payload = { embeds: [embed], components: rows };
-
-    if (editReply) {
-      await interaction.editReply(payload);
-    } else {
-      await interaction.reply({ ...payload, ephemeral: true });
-    }
-  } catch (err) {
-    console.error('[GAML Error]', err);
-    const msg = `❌ Erreur lors de la récupération des stats :\n\`${err.message}\``;
-    if (editReply) {
-      await interaction.editReply({ content: msg, embeds: [], components: [] });
-    } else {
-      await interaction.reply({ content: msg, ephemeral: true });
-    }
-  }
+  await channel.send({ embeds: [embed] });
+  console.log(`[Daily Report] Rapport envoyé — ${teamTotal} clics équipe`);
 }
 
 // ── Client Discord ───────────────────────────────────────────────────────────
@@ -156,73 +78,35 @@ const client = new Client({
 
 client.once(Events.ClientReady, () => {
   console.log(`✅ Bot connecté en tant que ${client.user.tag}`);
-  console.log(`📡 Salons accessibles : ${client.guilds.cache.size} serveur(s)`);
-});
+  console.log(`📡 Serveurs : ${client.guilds.cache.size}`);
 
-// ── Commande !setup (admin uniquement) ──────────────────────────────────────
-client.on(Events.MessageCreate, async (message) => {
-  if (message.author.bot) return;
-  if (message.content !== '!setup') return;
-  if (!message.member?.permissions.has(PermissionsBitField.Flags.Administrator)) {
-    return message.reply({ content: '❌ Réservé aux admins.', ephemeral: true });
-  }
-
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('consult_clicks')
-      .setLabel('Consulter mes clics')
-      .setStyle(ButtonStyle.Primary)
-  );
-
-  await message.channel.send({
-    content: '**Bienvenue dans le salon de consultation des clics.**\nClique sur le bouton ci-dessous pour ouvrir ton panneau perso.',
-    components: [row],
+  // ── Cron : rapport quotidien à 8h heure de Paris ────────────────────────
+  cron.schedule('0 8 * * *', () => {
+    console.log('[Cron] Déclenchement du rapport quotidien...');
+    sendDailyReport(client).catch(err =>
+      console.error('[Cron] Erreur rapport quotidien:', err)
+    );
+  }, {
+    timezone: 'Europe/Paris',
   });
 
-  await message.delete().catch(() => {});
+  console.log('⏰ Rapport quotidien programmé à 8h (Paris)');
 });
 
-// ── Interactions (boutons) ───────────────────────────────────────────────────
-client.on(Events.InteractionCreate, async (interaction) => {
-  if (!interaction.isButton()) return;
-
-  const userId = interaction.user.id;
-  const vas    = getVAs();
-  const va     = vas[userId];
-
-  if (!va) {
-    return interaction.reply({
-      content: '❌ Tu n\'es pas enregistré comme VA. Contacte un admin.',
-      ephemeral: true,
-    });
+// ── Commande !rapport (admin uniquement, test manuel) ───────────────────────
+client.on(Events.MessageCreate, async (message) => {
+  if (message.author.bot) return;
+  if (message.content !== '!rapport') return;
+  if (!message.member?.permissions.has(PermissionsBitField.Flags.Administrator)) {
+    return message.reply({ content: '❌ Réservé aux admins.' });
   }
 
-  const { customId } = interaction;
-
-  // ── Bouton principal "Consulter mes clics"
-  if (customId === 'consult_clicks') {
-    await interaction.deferReply({ ephemeral: true });
-    return showStats(interaction, va, 'cycle', true);
-  }
-
-  // ── Boutons de range (cycle, today, yesterday, 7days, 14days)
-  if (customId.startsWith('range_')) {
-    const range = customId.replace('range_', '');
-    await interaction.deferReply({ ephemeral: true });
-    return showStats(interaction, va, range, true);
-  }
-
-  // ── Bouton "Envoyer en DM"
-  if (customId === 'send_dm') {
-    await interaction.deferReply({ ephemeral: true });
-    try {
-      const data  = await getStats(va.linkId, 'cycle', config.cycle);
-      const embed = buildEmbed(data, va.name, 'cycle');
-      await interaction.user.send({ embeds: [embed] });
-      await interaction.editReply({ content: '✅ Stats envoyées en DM !', embeds: [], components: [] });
-    } catch (err) {
-      await interaction.editReply({ content: `❌ Impossible d'envoyer le DM : \`${err.message}\`` });
-    }
+  await message.reply('⏳ Génération du rapport...');
+  try {
+    await sendDailyReport(client);
+  } catch (err) {
+    console.error('[!rapport] Erreur:', err);
+    await message.reply(`❌ Erreur : \`${err.message}\``);
   }
 });
 
