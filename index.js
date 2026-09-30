@@ -132,20 +132,19 @@ function codeBlocks(text) {
   return chunks;
 }
 
-// Temporaire : montre la réponse brute des stats GetMySocial pour 3 liens
+// Temporaire : clics d'hier lien par lien, pour comparer au tableau de bord GMS
 async function gmsTest(message) {
   const links = await gms.getLinks();
-  const sample = links.slice(0, 3);
-  const raw = await gms.callTool('get_link_metrics', {
-    link_ids: sample.map(l => l.id), ...gms.yesterdayParams(), limit: 100,
-  });
-  const clicks = await gms.getYesterdayClicks(sample.map(l => l.id));
+  const clicks = await gms.getYesterdayClicks(links.map(l => l.id));
 
-  const out = `LIENS ACTIFS : ${links.length}\n`
-    + `VAs : ${[...new Set(links.map(l => l.va ?? '❓ Sans VA'))].join(', ')}\n\n`
-    + `CLICS LUS : ${sample.map(l => `${l.va} (${l.label}) = ${clicks.get(l.id) ?? 'absent'}`).join(' | ')}\n\n`
-    + `# get_link_metrics ${JSON.stringify(gms.yesterdayParams())}\n`
-    + JSON.stringify(raw, null, 1).slice(0, 3500);
+  const rows = links
+    .map(l => ({ ...l, clicks: clicks.get(l.id) }))
+    .sort((a, b) => (b.clicks ?? -1) - (a.clicks ?? -1));
+  const found = rows.filter(r => r.clicks !== undefined).length;
+
+  const out = `LIENS ACTIFS : ${links.length} — stats trouvées pour ${found}\n`
+    + `PÉRIODE : ${JSON.stringify(gms.yesterdayParams())}\n\n`
+    + rows.map(r => `${r.va ?? '❓ Sans VA'} (${r.label}) = ${r.clicks ?? 'absent'}`).join('\n');
 
   for (const chunk of codeBlocks(out).slice(0, 4)) {
     await message.channel.send(chunk);
