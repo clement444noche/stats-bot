@@ -136,20 +136,35 @@ client.on(Events.MessageCreate, async (message) => {
 
   try {
     const tools = await gms.listTools();
-    const toolsText = tools.map(t =>
-      `${t.name}(${Object.keys(t.inputSchema?.properties ?? {}).join(', ')})`
-    ).join('\n');
+    // 1) Noms des outils seulement
+    let out = `OUTILS : ${tools.map(t => t.name).join(', ')}`;
 
-    let sample = '';
-    const listTool = tools.find(t => /list.*link|links.*list|search.*link/i.test(t.name));
-    if (listTool) {
-      const data = await gms.callTool(listTool.name, {});
-      const items = Array.isArray(data) ? data : (data?.links ?? data?.items ?? data?.data ?? data);
-      const first = Array.isArray(items) ? items.slice(0, 2) : items;
-      sample = `\n\n--- ${listTool.name} (exemple) ---\n` + JSON.stringify(first, null, 1);
+    // 2) Détail des outils de lecture (liens, stats), sans les créations/modifs
+    const readTools = tools.filter(t =>
+      /link|analytic|stat|click|visit|group/i.test(t.name) &&
+      !/create|update|delete|assign|duplicate|enable|disable/i.test(t.name)
+    );
+    for (const t of readTools) {
+      const props = t.inputSchema?.properties ?? {};
+      const req = t.inputSchema?.required ?? [];
+      const args = Object.entries(props).map(([k, v]) => {
+        const type = v.enum ? v.enum.join('|') : (v.type ?? '?');
+        return `${k}${req.includes(k) ? '*' : ''}:${type}`;
+      }).join(', ');
+      out += `\n\n# ${t.name}(${args})\n${(t.description ?? '').slice(0, 300)}`;
     }
 
-    for (const chunk of codeBlocks(`Outils GetMySocial :\n${toolsText}${sample}`).slice(0, 5)) {
+    // 3) Exemple de lien : un seul, avec ses champs
+    const listTool = tools.find(t => /^list.*link|search.*link/i.test(t.name));
+    if (listTool) {
+      const data = await gms.callTool(listTool.name, {});
+      const items = Array.isArray(data) ? data : (data?.links ?? data?.items ?? data?.data ?? []);
+      const first = Array.isArray(items) ? items[0] : data;
+      out += `\n\n# EXEMPLE ${listTool.name} (${Array.isArray(items) ? items.length : '?'} liens)\n`
+        + JSON.stringify(first, null, 1).slice(0, 2500);
+    }
+
+    for (const chunk of codeBlocks(out).slice(0, 6)) {
       await message.channel.send(chunk);
     }
   } catch (err) {
