@@ -127,6 +127,11 @@ function clicksOf(row) {
   return null;
 }
 
+// Date (YYYY-MM-DD) il y a N jours, heure de Paris
+function daysAgo(n) {
+  return new Date(Date.now() - n * 86400000).toLocaleDateString('en-CA', { timeZone: TIMEZONE });
+}
+
 // Paramètres communs : la journée d'hier, heure de Paris
 function yesterdayParams() {
   const d = yesterdayDate();
@@ -134,12 +139,17 @@ function yesterdayParams() {
 }
 
 // Clics d'hier pour une liste de liens → Map(linkId → clics)
-async function getYesterdayClicks(linkIds) {
+function getYesterdayClicks(linkIds) {
+  return getClicks(linkIds, yesterdayParams());
+}
+
+// Clics sur une période { start_date, end_date, timezone } → Map(linkId → clics)
+async function getClicks(linkIds, period) {
   const result = new Map();
   for (let i = 0; i < linkIds.length; i += 50) {
     const batch = linkIds.slice(i, i + 50);
     const data = await callTool('get_link_metrics', {
-      link_ids: batch, ...yesterdayParams(), limit: 100,
+      link_ids: batch, ...period, limit: 100,
     });
     for (const row of itemsOf(data)) {
       const id = row.key ?? row.link_id ?? row.id ?? row.link?.id;
@@ -151,5 +161,6 @@ async function getYesterdayClicks(linkIds) {
 }
 
 module.exports = {
-  connect, listTools, callTool, getLinks, getYesterdayClicks, yesterdayParams,
+  connect, listTools, callTool, getLinks, getYesterdayClicks, getClicks,
+  yesterdayParams, daysAgo, TIMEZONE,
 };

@@ -132,19 +132,49 @@ function codeBlocks(text) {
   return chunks;
 }
 
-// Temporaire : clics d'hier lien par lien, pour comparer au tableau de bord GMS
+// Temporaire : essaie plusieurs façons de demander la période à GetMySocial
 async function gmsTest(message) {
   const links = await gms.getLinks();
-  const clicks = await gms.getYesterdayClicks(links.map(l => l.id));
+  const ids = links.map(l => l.id);
+  const tz = gms.TIMEZONE;
+  const d = gms.daysAgo;
 
-  const rows = links
-    .map(l => ({ ...l, clicks: clicks.get(l.id) }))
-    .sort((a, b) => (b.clicks ?? -1) - (a.clicks ?? -1));
-  const found = rows.filter(r => r.clicks !== undefined).length;
+  // Options acceptées par get_link_metrics (valeurs possibles de timeframe…)
+  const tools = await gms.listTools();
+  const schema = tools.find(t => t.name === 'get_link_metrics')?.inputSchema?.properties ?? {};
+  const schemaText = Object.entries(schema)
+    .map(([k, v]) => `${k}: ${v.enum ? v.enum.join('|') : v.type ?? '?'}${v.description ? ' — ' + v.description.slice(0, 120) : ''}`)
+    .join('\n');
 
-  const out = `LIENS ACTIFS : ${links.length} — stats trouvées pour ${found}\n`
-    + `PÉRIODE : ${JSON.stringify(gms.yesterdayParams())}\n\n`
-    + rows.map(r => `${r.va ?? '❓ Sans VA'} (${r.label}) = ${r.clicks ?? 'absent'}`).join('\n');
+  const tries = {
+    'A hier→hier': { start_date: d(1), end_date: d(1), timezone: tz },
+    'B hier→aujourd\'hui': { start_date: d(1), end_date: d(0), timezone: tz },
+    'C 30 jours': { start_date: d(30), end_date: d(0), timezone: tz },
+    'D sans timezone': { start_date: d(1), end_date: d(0) },
+  };
+  if (schema.timeframe?.enum?.includes('yesterday')) tries['E timeframe=yesterday'] = { timeframe: 'yesterday', timezone: tz };
+
+  let out = `LIENS ACTIFS : ${links.length}\n\nOPTIONS get_link_metrics :\n${schemaText}\n\nTOTAUX PAR ESSAI :`;
+  let best = null;
+  for (const [label, period] of Object.entries(tries)) {
+    try {
+      const m = await gms.getClicks(ids, period);
+      const total = [...m.values()].reduce((s, v) => s + v, 0);
+      out += `\n${label} ${JSON.stringify(period)} → ${total} clics (${m.size} liens)`;
+      if (!best || total > best.total) best = { label, total, m };
+    } catch (err) {
+      out += `\n${label} → ERREUR ${err.message}`;
+    }
+  }
+
+  // Exemple de réponse brute pour le 1er lien sur 30 jours
+  const raw = await gms.callTool('get_link_metrics', { link_ids: ids.slice(0, 1), ...tries['C 30 jours'] });
+  out += `\n\nRÉPONSE BRUTE (1 lien, 30 jours) :\n${JSON.stringify(raw, null, 1).slice(0, 1200)}`;
+
+  if (best?.m) {
+    out += `\n\nDÉTAIL (${best.label}) :\n` + links
+      .map(l => `${l.va ?? '❓ Sans VA'} (${l.label}) = ${best.m.get(l.id) ?? '-'}`).join('\n');
+  }
 
   for (const chunk of codeBlocks(out).slice(0, 4)) {
     await message.channel.send(chunk);
