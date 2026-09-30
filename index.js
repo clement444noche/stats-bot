@@ -8,6 +8,7 @@ const {
 } = require('discord.js');
 const cron = require('node-cron');
 const { getLinks, getYesterdayClicks } = require('./gaml');
+const gms = require('./gms');
 
 // ── Label "Hier (29 sept.)" en heure de Paris ────────────────────────────────
 function yesterdayLabel() {
@@ -115,6 +116,44 @@ client.on(Events.MessageCreate, async (message) => {
     await sendDailyReport(client);
   } catch (err) {
     console.error('[!rapport] Erreur:', err);
+    await message.reply(`❌ Erreur : \`${err.message}\``);
+  }
+});
+
+// ── Commande !gms-test (admin, temporaire) : explore l'API GetMySocial ──────
+function codeBlocks(text) {
+  const chunks = [];
+  for (let i = 0; i < text.length; i += 1900) chunks.push('```\n' + text.slice(i, i + 1900) + '\n```');
+  return chunks;
+}
+
+client.on(Events.MessageCreate, async (message) => {
+  if (message.author.bot) return;
+  if (message.content !== '!gms-test') return;
+  if (!message.member?.permissions.has(PermissionsBitField.Flags.Administrator)) {
+    return message.reply({ content: '❌ Réservé aux admins.' });
+  }
+
+  try {
+    const tools = await gms.listTools();
+    const toolsText = tools.map(t =>
+      `${t.name}(${Object.keys(t.inputSchema?.properties ?? {}).join(', ')})`
+    ).join('\n');
+
+    let sample = '';
+    const listTool = tools.find(t => /list.*link|links.*list|search.*link/i.test(t.name));
+    if (listTool) {
+      const data = await gms.callTool(listTool.name, {});
+      const items = Array.isArray(data) ? data : (data?.links ?? data?.items ?? data?.data ?? data);
+      const first = Array.isArray(items) ? items.slice(0, 2) : items;
+      sample = `\n\n--- ${listTool.name} (exemple) ---\n` + JSON.stringify(first, null, 1);
+    }
+
+    for (const chunk of codeBlocks(`Outils GetMySocial :\n${toolsText}${sample}`).slice(0, 5)) {
+      await message.channel.send(chunk);
+    }
+  } catch (err) {
+    console.error('[!gms-test] Erreur:', err);
     await message.reply(`❌ Erreur : \`${err.message}\``);
   }
 });
