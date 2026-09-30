@@ -70,8 +70,10 @@ async function listTools() {
 // Appelle un outil et renvoie son contenu (JSON si possible, sinon texte)
 async function callTool(name, args = {}) {
   const result = await rpc('tools/call', { name, arguments: args });
-  if (result?.structuredContent) return result.structuredContent;
   const text = (result?.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\n');
+  // Erreur renvoyée par l'outil : on la remonte au lieu de la prendre pour des données
+  if (result?.isError) throw new Error(`GMS ${name} : ${text.slice(0, 200)}`);
+  if (result?.structuredContent) return result.structuredContent;
   try { return JSON.parse(text); } catch { return text; }
 }
 
@@ -132,10 +134,9 @@ function daysAgo(n) {
   return new Date(Date.now() - n * 86400000).toLocaleDateString('en-CA', { timeZone: TIMEZONE });
 }
 
-// Paramètres communs : la journée d'hier, heure de Paris
+// Période du rapport : « hier » au sens de GetMySocial, heure de Paris
 function yesterdayParams() {
-  const d = yesterdayDate();
-  return { start_date: d, end_date: d, timezone: TIMEZONE };
+  return { timeframe: 'yesterday', timezone: TIMEZONE };
 }
 
 // Clics d'hier pour une liste de liens → Map(linkId → clics)
@@ -143,18 +144,19 @@ function getYesterdayClicks(linkIds) {
   return getClicks(linkIds, yesterdayParams());
 }
 
-// Clics sur une période { start_date, end_date, timezone } → Map(linkId → clics)
+// Clics sur une période → Map(linkId → clics ou null si erreur).
+// Un appel par lien : demander plusieurs liens d'un coup ne renvoie rien d'exploitable.
 async function getClicks(linkIds, period) {
   const result = new Map();
-  for (let i = 0; i < linkIds.length; i += 50) {
-    const batch = linkIds.slice(i, i + 50);
-    const data = await callTool('get_link_metrics', {
-      link_ids: batch, ...period, limit: 100,
-    });
-    for (const row of itemsOf(data)) {
-      const id = row.key ?? row.link_id ?? row.id ?? row.link?.id;
-      const clicks = clicksOf(row);
-      if (id && clicks !== null) result.set(id, clicks);
+  for (const linkId of linkIds) {
+    try {
+      const data = await callTool('get_link_metrics', { link_ids: [linkId], ...period });
+      const row = itemsOf(data).find(r => (r.key ?? r.link_id ?? r.id) === linkId);
+      // Pas de ligne pour ce lien sur la période = aucune visite
+      result.set(linkId, row ? (clicksOf(row) ?? 0) : 0);
+    } catch (err) {
+      console.error(`[GMS] Erreur stats pour ${linkId}:`, err.message);
+      result.set(linkId, null);
     }
   }
   return result;

@@ -91,8 +91,8 @@ async function sendGamlReport(client) {
 async function sendGmsReport(client) {
   const links = await gms.getLinks();
   const clicks = await gms.getYesterdayClicks(links.map(l => l.id));
-  // Un lien absent des métriques n'a eu aucune visite hier
-  const entries = links.map(l => ({ va: l.va, clicks: clicks.get(l.id) ?? 0 }));
+  // null = erreur GetMySocial pour ce lien (affichée « ❌ erreur »)
+  const entries = links.map(l => ({ va: l.va, clicks: clicks.get(l.id) ?? null }));
   await postReport(client, process.env.GMS_REPORT_CHANNEL_ID, '🐦 Rapport Twitter', entries);
 }
 
@@ -132,49 +132,27 @@ function codeBlocks(text) {
   return chunks;
 }
 
-// Temporaire : essaie plusieurs façons de demander la période à GetMySocial
+// Temporaire : clics d'hier et des 30 derniers jours, lien par lien,
+// pour comparer au tableau de bord GetMySocial
 async function gmsTest(message) {
   const links = await gms.getLinks();
   const ids = links.map(l => l.id);
-  const tz = gms.TIMEZONE;
-  const d = gms.daysAgo;
+  const hier = await gms.getYesterdayClicks(ids);
+  const mois = await gms.getClicks(ids, {
+    start_date: gms.daysAgo(30), end_date: gms.daysAgo(0), timezone: gms.TIMEZONE,
+  });
 
-  // Options acceptées par get_link_metrics (valeurs possibles de timeframe…)
-  const tools = await gms.listTools();
-  const schema = tools.find(t => t.name === 'get_link_metrics')?.inputSchema?.properties ?? {};
-  const schemaText = Object.entries(schema)
-    .map(([k, v]) => `${k}: ${v.enum ? v.enum.join('|') : v.type ?? '?'}${v.description ? ' — ' + v.description.slice(0, 120) : ''}`)
-    .join('\n');
+  const sum = m => [...m.values()].reduce((s, v) => s + (v ?? 0), 0);
+  const fmt = v => (v === null || v === undefined ? 'ERREUR' : v);
 
-  const tries = {
-    'A hier→hier': { start_date: d(1), end_date: d(1), timezone: tz },
-    'B hier→aujourd\'hui': { start_date: d(1), end_date: d(0), timezone: tz },
-    'C 30 jours': { start_date: d(30), end_date: d(0), timezone: tz },
-    'D sans timezone': { start_date: d(1), end_date: d(0) },
-  };
-  if (schema.timeframe?.enum?.includes('yesterday')) tries['E timeframe=yesterday'] = { timeframe: 'yesterday', timezone: tz };
-
-  let out = `LIENS ACTIFS : ${links.length}\n\nOPTIONS get_link_metrics :\n${schemaText}\n\nTOTAUX PAR ESSAI :`;
-  let best = null;
-  for (const [label, period] of Object.entries(tries)) {
-    try {
-      const m = await gms.getClicks(ids, period);
-      const total = [...m.values()].reduce((s, v) => s + v, 0);
-      out += `\n${label} ${JSON.stringify(period)} → ${total} clics (${m.size} liens)`;
-      if (!best || total > best.total) best = { label, total, m };
-    } catch (err) {
-      out += `\n${label} → ERREUR ${err.message}`;
-    }
-  }
-
-  // Exemple de réponse brute pour le 1er lien sur 30 jours
-  const raw = await gms.callTool('get_link_metrics', { link_ids: ids.slice(0, 1), ...tries['C 30 jours'] });
-  out += `\n\nRÉPONSE BRUTE (1 lien, 30 jours) :\n${JSON.stringify(raw, null, 1).slice(0, 1200)}`;
-
-  if (best?.m) {
-    out += `\n\nDÉTAIL (${best.label}) :\n` + links
-      .map(l => `${l.va ?? '❓ Sans VA'} (${l.label}) = ${best.m.get(l.id) ?? '-'}`).join('\n');
-  }
+  const out = `LIENS ACTIFS : ${links.length}\n`
+    + `TOTAL : hier ${sum(hier)} | 30 derniers jours ${sum(mois)}\n\n`
+    + `VA (lien) = hier / 30 jours\n`
+    + links
+      .map(l => ({ ...l, h: hier.get(l.id), m: mois.get(l.id) }))
+      .sort((a, b) => (b.m ?? -1) - (a.m ?? -1))
+      .map(r => `${r.va ?? '❓ Sans VA'} (${r.label}) = ${fmt(r.h)} / ${fmt(r.m)}`)
+      .join('\n');
 
   for (const chunk of codeBlocks(out).slice(0, 4)) {
     await message.channel.send(chunk);
