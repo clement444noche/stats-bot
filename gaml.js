@@ -90,9 +90,8 @@ function isTargetCountry(row) {
     .some(v => v && TARGET_COUNTRIES.has(String(v).trim().toUpperCase()));
 }
 
-// Clics (visites, bots exclus) d'un lien sur une période, heure de Paris,
-// uniquement depuis les US, le UK, l'Australie et le Canada
-async function getTargetClicks(linkId, period) {
+// Ancienne méthode (top 10 des pays seulement) : gardée pour la vérification
+async function getTop10TargetClicks(linkId, period) {
   const countries = await fetchGAML('/analytics/countries', {
     link_id: linkId,
     ...period,
@@ -104,8 +103,27 @@ async function getTargetClicks(linkId, period) {
     .reduce((sum, row) => sum + (row.count ?? 0), 0);
 }
 
-function getYesterdayClicks(linkId) {
-  return getTargetClicks(linkId, { range: 'yesterday' });
+// Plafond de /analytics/traffic par appel : au-delà, des visites manqueraient
+const TRAFFIC_CAP = 10000;
+
+// Clics exacts d'un lien sur UNE journée (heure de Paris), uniquement
+// US/UK/AU/CA : on compte visite par visite, sans la limite du top 10 des pays
+async function getDayTargetClicks(linkId, date) {
+  const visits = await fetchGAML('/analytics/traffic', {
+    link_id: linkId,
+    range: 'custom',
+    date_from: date,
+    date_to: date,
+    timezone: TIMEZONE,
+    hide_bots: true,
+  });
+  if (visits.length >= TRAFFIC_CAP) {
+    throw new Error(`plus de ${TRAFFIC_CAP} visites le ${date}, comptage incomplet`);
+  }
+  return {
+    total: visits.length,
+    target: visits.filter(isTargetCountry).length,
+  };
 }
 
 // Date YYYY-MM-DD décalée de n jours (calcul sur la date seule, sans heure)
@@ -115,31 +133,57 @@ function shiftDate(isoDate, n) {
   return d.toISOString().slice(0, 10);
 }
 
+function todayParis() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: TIMEZONE });
+}
+
+async function getYesterdayClicks(linkId) {
+  return (await getDayTargetClicks(linkId, shiftDate(todayParis(), -1))).target;
+}
+
 // Semaine précédente complète, du lundi au dimanche inclus, heure de Paris
 function lastWeek() {
-  const today = new Date().toLocaleDateString('en-CA', { timeZone: TIMEZONE });
+  const today = todayParis();
   const dow = new Date(`${today}T00:00:00Z`).getUTCDay(); // 0 = dimanche
   const thisMonday = shiftDate(today, -((dow + 6) % 7));
   return { from: shiftDate(thisMonday, -7), to: shiftDate(thisMonday, -1) };
 }
 
-// date_to est inclus par GAML (vérifié : les visites par jour s'arrêtent au dimanche)
-function getLastWeekClicks(linkId, week = lastWeek()) {
-  return getTargetClicks(linkId, { range: 'custom', date_from: week.from, date_to: week.to });
+// Clics exacts de la semaine : une journée à la fois (date_to inclus par GAML)
+async function getLastWeekClicks(linkId, week = lastWeek()) {
+  let sum = 0;
+  for (let date = week.from; date <= week.to; date = shiftDate(date, 1)) {
+    sum += (await getDayTargetClicks(linkId, date)).target;
+  }
+  return sum;
 }
 
-// Temporaire : données brutes d'un lien sur la semaine dernière (vérif compta)
+// Temporaire : compare, jour par jour, visites totales (graphique GAML),
+// visites comptées une à une, et clics US/UK/AU/CA ancienne / nouvelle méthode
 async function debugLastWeek(linkId) {
   const week = lastWeek();
   const period = {
     link_id: linkId, range: 'custom', date_from: week.from,
     date_to: week.to, timezone: TIMEZONE, hide_bots: true,
   };
-  const [countries, visitors] = await Promise.all([
-    fetchGAML('/analytics/countries', period),
-    fetchGAML('/analytics/visitors', period),
-  ]);
-  return { week, countries, visitors, matched: countries.filter(isTargetCountry) };
+  const visitors = await fetchGAML('/analytics/visitors', period);
+  const top10 = await getTop10TargetClicks(linkId, {
+    range: 'custom', date_from: week.from, date_to: week.to,
+  });
+
+  const days = [];
+  for (let date = week.from; date <= week.to; date = shiftDate(date, 1)) {
+    const exact = await getDayTargetClicks(linkId, date);
+    const chart = visitors.find(v => String(v.date).startsWith(date))?.totalVisits ?? null;
+    days.push({ date, chart, ...exact });
+  }
+
+  // Exemple de visite brute, pour vérifier le format du pays
+  const sample = await fetchGAML('/analytics/traffic', {
+    link_id: linkId, range: 'custom', date_from: week.to, date_to: week.to,
+    timezone: TIMEZONE, hide_bots: true,
+  });
+  return { week, days, top10, sample: sample.slice(0, 2) };
 }
 
 module.exports = { getLinks, getYesterdayClicks, getLastWeekClicks, lastWeek, debugLastWeek };
