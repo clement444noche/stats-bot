@@ -62,7 +62,7 @@ async function postReport(client, channelId, title, entries) {
   });
 
   const embed = new EmbedBuilder()
-    .setTitle(`${title} — Hier (${yesterdayLabel()})`)
+    .setTitle(title)
     .setDescription(lines.join('\n') || '_Aucun lien actif_')
     .setColor(0x57F287)
     .setFooter({ text: `Total équipe : ${teamTotal} clics` })
@@ -84,7 +84,31 @@ async function sendGamlReport(client) {
       entries.push({ va: link.va, clicks: null });
     }
   }
-  await postReport(client, process.env.REPORT_CHANNEL_ID, '📊 Rapport Insta (🇺🇸🇬🇧🇦🇺🇨🇦)', entries);
+  await postReport(client, process.env.REPORT_CHANNEL_ID,
+    `📊 Rapport Insta (🇺🇸🇬🇧🇦🇺🇨🇦) — Hier (${yesterdayLabel()})`, entries);
+}
+
+// ── Rapport compta hebdo Insta → salon compta (lundi 00h10) ─────────────────
+function frDate(iso) {
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+async function sendComptaReport(client) {
+  const week = gaml.lastWeek();
+  const links = await gaml.getLinks();
+  const entries = [];
+  for (const link of links) {
+    try {
+      entries.push({ va: link.va, clicks: await gaml.getLastWeekClicks(link.id, week) });
+    } catch (err) {
+      console.error(`[Compta] Erreur pour ${link.va} (${link.label}):`, err.message);
+      entries.push({ va: link.va, clicks: null });
+    }
+  }
+  await postReport(client, process.env.COMPTA_CHANNEL_ID,
+    `💰 Compta Insta (🇺🇸🇬🇧🇦🇺🇨🇦) — Semaine du lundi ${frDate(week.from)} au dimanche ${frDate(week.to)}`,
+    entries);
 }
 
 // ── Rapport GetMySocial (VAs Twitter) → salon Twitter ───────────────────────
@@ -94,7 +118,8 @@ async function sendGmsReport(client) {
   const clicks = await gms.getYesterdayTargetClicks(links.map(l => l.id));
   // null = erreur GetMySocial pour ce lien (affichée « ❌ erreur »)
   const entries = links.map(l => ({ va: l.va, clicks: clicks.get(l.id) ?? null }));
-  await postReport(client, process.env.GMS_REPORT_CHANNEL_ID, '🐦 Rapport Twitter (🇺🇸🇬🇧🇦🇺🇨🇦)', entries);
+  await postReport(client, process.env.GMS_REPORT_CHANNEL_ID,
+    `🐦 Rapport Twitter (🇺🇸🇬🇧🇦🇺🇨🇦) — Hier (${yesterdayLabel()})`, entries);
 }
 
 // ── Client Discord ───────────────────────────────────────────────────────────
@@ -120,9 +145,19 @@ client.once(Events.ClientReady, () => {
   });
 
   console.log('⏰ Rapports quotidiens programmés à 8h (Paris)');
+
+  // ── Cron : compta hebdo Insta le lundi à 00h10 heure de Paris ───────────
+  cron.schedule('10 0 * * 1', () => {
+    console.log('[Cron] Déclenchement du rapport compta hebdo...');
+    sendComptaReport(client).catch(err => console.error('[Cron] Erreur rapport compta:', err));
+  }, {
+    timezone: 'Europe/Paris',
+  });
+
+  console.log('⏰ Rapport compta programmé le lundi à 00h10 (Paris)');
 });
 
-// ── Commandes admin : !rapport (Insta), !rapport-twitter ────────────────────
+// ── Commandes admin : !rapport (Insta), !rapport-twitter, !compta ───────────
 function isAdmin(message) {
   return message.member?.permissions.has(PermissionsBitField.Flags.Administrator);
 }
@@ -130,6 +165,7 @@ function isAdmin(message) {
 const COMMANDS = {
   '!rapport': client => sendGamlReport(client),
   '!rapport-twitter': client => sendGmsReport(client),
+  '!compta': client => sendComptaReport(client),
 };
 
 client.on(Events.MessageCreate, async (message) => {

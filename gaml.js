@@ -90,12 +90,12 @@ function isTargetCountry(row) {
     .some(v => v && TARGET_COUNTRIES.has(String(v).trim().toUpperCase()));
 }
 
-// Clics (visites, bots exclus) d'un lien pour la veille, heure de Paris,
+// Clics (visites, bots exclus) d'un lien sur une période, heure de Paris,
 // uniquement depuis les US, le UK, l'Australie et le Canada
-async function getYesterdayClicks(linkId) {
+async function getTargetClicks(linkId, period) {
   const countries = await fetchGAML('/analytics/countries', {
     link_id: linkId,
-    range: 'yesterday',
+    ...period,
     timezone: TIMEZONE,
     hide_bots: true,
   });
@@ -104,4 +104,27 @@ async function getYesterdayClicks(linkId) {
     .reduce((sum, row) => sum + (row.count ?? 0), 0);
 }
 
-module.exports = { getLinks, getYesterdayClicks };
+function getYesterdayClicks(linkId) {
+  return getTargetClicks(linkId, { range: 'yesterday' });
+}
+
+// Date YYYY-MM-DD décalée de n jours (calcul sur la date seule, sans heure)
+function shiftDate(isoDate, n) {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+// Semaine précédente complète, du lundi au dimanche inclus, heure de Paris
+function lastWeek() {
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: TIMEZONE });
+  const dow = new Date(`${today}T00:00:00Z`).getUTCDay(); // 0 = dimanche
+  const thisMonday = shiftDate(today, -((dow + 6) % 7));
+  return { from: shiftDate(thisMonday, -7), to: shiftDate(thisMonday, -1) };
+}
+
+function getLastWeekClicks(linkId, week = lastWeek()) {
+  return getTargetClicks(linkId, { range: 'custom', date_from: week.from, date_to: week.to });
+}
+
+module.exports = { getLinks, getYesterdayClicks, getLastWeekClicks, lastWeek };
