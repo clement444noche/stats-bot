@@ -84,7 +84,7 @@ async function sendGamlReport(client) {
       entries.push({ va: link.va, clicks: null });
     }
   }
-  await postReport(client, process.env.REPORT_CHANNEL_ID, '📊 Rapport quotidien', entries);
+  await postReport(client, process.env.REPORT_CHANNEL_ID, '📊 Rapport Insta (🇺🇸🇬🇧🇦🇺🇨🇦)', entries);
 }
 
 // ── Rapport GetMySocial (VAs Twitter) → salon Twitter ───────────────────────

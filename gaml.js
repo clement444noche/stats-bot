@@ -79,7 +79,19 @@ async function getLinks() {
   }));
 }
 
-// Nombre de clics (visites, bots exclus) d'un lien pour la veille, heure de Paris
+// Pays retenus : US, UK, Australie, Canada (code ISO ou nom complet selon la réponse)
+const TARGET_COUNTRIES = new Set([
+  'US', 'GB', 'UK', 'AU', 'CA',
+  'UNITED STATES', 'UNITED STATES OF AMERICA', 'UNITED KINGDOM', 'AUSTRALIA', 'CANADA',
+]);
+
+function isTargetCountry(row) {
+  return [row.country_code, row.countryCode, row.code, row.country]
+    .some(v => v && TARGET_COUNTRIES.has(String(v).trim().toUpperCase()));
+}
+
+// Clics (visites, bots exclus) d'un lien pour la veille, heure de Paris,
+// uniquement depuis les US, le UK, l'Australie et le Canada
 async function getYesterdayClicks(linkId) {
   const countries = await fetchGAML('/analytics/countries', {
     link_id: linkId,
@@ -87,7 +99,9 @@ async function getYesterdayClicks(linkId) {
     timezone: TIMEZONE,
     hide_bots: true,
   });
-  return countries.reduce((sum, row) => sum + (row.count ?? 0), 0);
+  return countries
+    .filter(isTargetCountry)
+    .reduce((sum, row) => sum + (row.count ?? 0), 0);
 }
 
 module.exports = { getLinks, getYesterdayClicks };
