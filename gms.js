@@ -165,8 +165,9 @@ async function getClicks(linkIds, period) {
 // Pays retenus pour le rapport Twitter (codes ISO ; « UK » toléré pour GB)
 const TARGET_COUNTRIES = ['US', 'GB', 'UK', 'AU', 'CA'];
 
+// GMS renvoie { country: "United States of America", country_code: "US", count }
 function countryOf(row) {
-  return String(row.key ?? row.country ?? row.country_code ?? row.code ?? '').toUpperCase();
+  return String(row.country_code ?? row.code ?? row.key ?? row.country ?? '').toUpperCase();
 }
 
 // Clics d'un lien sur la période, limités aux pays ciblés (null si erreur)
