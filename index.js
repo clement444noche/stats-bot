@@ -90,10 +90,11 @@ async function sendGamlReport(client) {
 // ── Rapport GetMySocial (VAs Twitter) → salon Twitter ───────────────────────
 async function sendGmsReport(client) {
   const links = await gms.getLinks();
-  const clicks = await gms.getYesterdayClicks(links.map(l => l.id));
+  // Uniquement les clics venant des US, du UK, d'Australie et du Canada
+  const clicks = await gms.getYesterdayTargetClicks(links.map(l => l.id));
   // null = erreur GetMySocial pour ce lien (affichée « ❌ erreur »)
   const entries = links.map(l => ({ va: l.va, clicks: clicks.get(l.id) ?? null }));
-  await postReport(client, process.env.GMS_REPORT_CHANNEL_ID, '🐦 Rapport Twitter', entries);
+  await postReport(client, process.env.GMS_REPORT_CHANNEL_ID, '🐦 Rapport Twitter (🇺🇸🇬🇧🇦🇺🇨🇦)', entries);
 }
 
 // ── Client Discord ───────────────────────────────────────────────────────────
@@ -132,27 +133,29 @@ function codeBlocks(text) {
   return chunks;
 }
 
-// Temporaire : clics d'hier et des 30 derniers jours, lien par lien,
-// pour comparer au tableau de bord GetMySocial
+// Temporaire : clics d'hier, total et filtrés US/UK/AU/CA, lien par lien
 async function gmsTest(message) {
   const links = await gms.getLinks();
   const ids = links.map(l => l.id);
-  const hier = await gms.getYesterdayClicks(ids);
-  const mois = await gms.getClicks(ids, {
-    start_date: gms.daysAgo(30), end_date: gms.daysAgo(0), timezone: gms.TIMEZONE,
-  });
+  const total = await gms.getYesterdayClicks(ids);
+  const cible = await gms.getYesterdayTargetClicks(ids);
 
   const sum = m => [...m.values()].reduce((s, v) => s + (v ?? 0), 0);
   const fmt = v => (v === null || v === undefined ? 'ERREUR' : v);
 
-  const out = `LIENS ACTIFS : ${links.length}\n`
-    + `TOTAL : hier ${sum(hier)} | 30 derniers jours ${sum(mois)}\n\n`
-    + `VA (lien) = hier / 30 jours\n`
+  // Réponse brute « pays » pour le lien le plus cliqué, pour vérifier le format
+  const top = ids.reduce((a, b) => ((total.get(b) ?? 0) > (total.get(a) ?? 0) ? b : a), ids[0]);
+  const raw = await gms.callTool('get_top_countries', { link_ids: [top], ...gms.yesterdayParams(), limit: 100 })
+    .catch(err => `ERREUR ${err.message}`);
+
+  const out = `HIER : total ${sum(total)} | US/UK/AU/CA ${sum(cible)}\n\n`
+    + `VA (lien) = total / US-UK-AU-CA\n`
     + links
-      .map(l => ({ ...l, h: hier.get(l.id), m: mois.get(l.id) }))
-      .sort((a, b) => (b.m ?? -1) - (a.m ?? -1))
-      .map(r => `${r.va ?? '❓ Sans VA'} (${r.label}) = ${fmt(r.h)} / ${fmt(r.m)}`)
-      .join('\n');
+      .map(l => ({ ...l, t: total.get(l.id), c: cible.get(l.id) }))
+      .sort((a, b) => (b.t ?? -1) - (a.t ?? -1))
+      .map(r => `${r.va ?? '❓ Sans VA'} (${r.label}) = ${fmt(r.t)} / ${fmt(r.c)}`)
+      .join('\n')
+    + `\n\nPAYS BRUTS (lien le plus cliqué) :\n${JSON.stringify(raw, null, 1).slice(0, 1500)}`;
 
   for (const chunk of codeBlocks(out).slice(0, 4)) {
     await message.channel.send(chunk);

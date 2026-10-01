@@ -162,7 +162,36 @@ async function getClicks(linkIds, period) {
   return result;
 }
 
+// Pays retenus pour le rapport Twitter (codes ISO ; « UK » toléré pour GB)
+const TARGET_COUNTRIES = ['US', 'GB', 'UK', 'AU', 'CA'];
+
+function countryOf(row) {
+  return String(row.key ?? row.country ?? row.country_code ?? row.code ?? '').toUpperCase();
+}
+
+// Clics d'un lien sur la période, limités aux pays ciblés (null si erreur)
+async function getCountryClicks(linkId, period) {
+  const data = await callTool('get_top_countries', { link_ids: [linkId], ...period, limit: 100 });
+  return itemsOf(data)
+    .filter(row => TARGET_COUNTRIES.includes(countryOf(row)))
+    .reduce((sum, row) => sum + (clicksOf(row) ?? row.count ?? row.value ?? 0), 0);
+}
+
+// Clics d'hier US/UK/AU/CA pour une liste de liens → Map(linkId → clics ou null)
+async function getYesterdayTargetClicks(linkIds) {
+  const result = new Map();
+  for (const linkId of linkIds) {
+    try {
+      result.set(linkId, await getCountryClicks(linkId, yesterdayParams()));
+    } catch (err) {
+      console.error(`[GMS] Erreur pays pour ${linkId}:`, err.message);
+      result.set(linkId, null);
+    }
+  }
+  return result;
+}
+
 module.exports = {
   connect, listTools, callTool, getLinks, getYesterdayClicks, getClicks,
-  yesterdayParams, daysAgo, TIMEZONE,
+  getYesterdayTargetClicks, yesterdayParams, daysAgo, TIMEZONE,
 };
