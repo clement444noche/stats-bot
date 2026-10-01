@@ -123,8 +123,12 @@ function lastWeek() {
   return { from: shiftDate(thisMonday, -7), to: shiftDate(thisMonday, -1) };
 }
 
+// GAML exclut la date de fin (« jusqu'au début de date_to ») : on demande
+// jusqu'au lundi suivant pour inclure tout le dimanche (vérifié sur le dashboard)
 function getLastWeekClicks(linkId, week = lastWeek()) {
-  return getTargetClicks(linkId, { range: 'custom', date_from: week.from, date_to: week.to });
+  return getTargetClicks(linkId, {
+    range: 'custom', date_from: week.from, date_to: shiftDate(week.to, 1),
+  });
 }
 
 module.exports = { getLinks, getYesterdayClicks, getLastWeekClicks, lastWeek };
