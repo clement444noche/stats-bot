@@ -122,44 +122,9 @@ client.once(Events.ClientReady, () => {
   console.log('⏰ Rapports quotidiens programmés à 8h (Paris)');
 });
 
-// ── Commandes admin : !rapport (Insta), !rapport-twitter, !gms-test ─────────
+// ── Commandes admin : !rapport (Insta), !rapport-twitter ────────────────────
 function isAdmin(message) {
   return message.member?.permissions.has(PermissionsBitField.Flags.Administrator);
-}
-
-function codeBlocks(text) {
-  const chunks = [];
-  for (let i = 0; i < text.length; i += 1900) chunks.push('```\n' + text.slice(i, i + 1900) + '\n```');
-  return chunks;
-}
-
-// Temporaire : clics d'hier, total et filtrés US/UK/AU/CA, lien par lien
-async function gmsTest(message) {
-  const links = await gms.getLinks();
-  const ids = links.map(l => l.id);
-  const total = await gms.getYesterdayClicks(ids);
-  const cible = await gms.getYesterdayTargetClicks(ids);
-
-  const sum = m => [...m.values()].reduce((s, v) => s + (v ?? 0), 0);
-  const fmt = v => (v === null || v === undefined ? 'ERREUR' : v);
-
-  // Réponse brute « pays » pour le lien le plus cliqué, pour vérifier le format
-  const top = ids.reduce((a, b) => ((total.get(b) ?? 0) > (total.get(a) ?? 0) ? b : a), ids[0]);
-  const raw = await gms.callTool('get_top_countries', { link_ids: [top], ...gms.yesterdayParams(), limit: 100 })
-    .catch(err => `ERREUR ${err.message}`);
-
-  const out = `HIER : total ${sum(total)} | US/UK/AU/CA ${sum(cible)}\n\n`
-    + `VA (lien) = total / US-UK-AU-CA\n`
-    + links
-      .map(l => ({ ...l, t: total.get(l.id), c: cible.get(l.id) }))
-      .sort((a, b) => (b.t ?? -1) - (a.t ?? -1))
-      .map(r => `${r.va ?? '❓ Sans VA'} (${r.label}) = ${fmt(r.t)} / ${fmt(r.c)}`)
-      .join('\n')
-    + `\n\nPAYS BRUTS (lien le plus cliqué) :\n${JSON.stringify(raw, null, 1).slice(0, 1500)}`;
-
-  for (const chunk of codeBlocks(out).slice(0, 4)) {
-    await message.channel.send(chunk);
-  }
 }
 
 const COMMANDS = {
@@ -170,13 +135,12 @@ const COMMANDS = {
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot) return;
   const command = message.content.trim();
-  if (!COMMANDS[command] && command !== '!gms-test') return;
+  if (!COMMANDS[command]) return;
   if (!isAdmin(message)) {
     return message.reply({ content: '❌ Réservé aux admins.' });
   }
 
   try {
-    if (command === '!gms-test') return await gmsTest(message);
     await message.reply('⏳ Génération du rapport...');
     await COMMANDS[command](client);
   } catch (err) {
