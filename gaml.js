@@ -90,19 +90,8 @@ function isTargetCountry(row) {
     .some(v => v && TARGET_COUNTRIES.has(String(v).trim().toUpperCase()));
 }
 
-// Ancienne méthode (top 10 des pays seulement) : gardée pour la vérification
-async function getTop10TargetClicks(linkId, period) {
-  const countries = await fetchGAML('/analytics/countries', {
-    link_id: linkId,
-    ...period,
-    timezone: TIMEZONE,
-    hide_bots: true,
-  });
-  return countries
-    .filter(isTargetCountry)
-    .reduce((sum, row) => sum + (row.count ?? 0), 0);
-}
-
+// /analytics/countries ne renvoie que le top 10 des pays (un pays cible hors
+// top 10 serait perdu) : on compte donc les visites une à une via /traffic.
 // Plafond de /analytics/traffic par appel : au-delà, des visites manqueraient
 const TRAFFIC_CAP = 10000;
 
@@ -158,32 +147,4 @@ async function getLastWeekClicks(linkId, week = lastWeek()) {
   return sum;
 }
 
-// Temporaire : compare, jour par jour, visites totales (graphique GAML),
-// visites comptées une à une, et clics US/UK/AU/CA ancienne / nouvelle méthode
-async function debugLastWeek(linkId) {
-  const week = lastWeek();
-  const period = {
-    link_id: linkId, range: 'custom', date_from: week.from,
-    date_to: week.to, timezone: TIMEZONE, hide_bots: true,
-  };
-  const visitors = await fetchGAML('/analytics/visitors', period);
-  const top10 = await getTop10TargetClicks(linkId, {
-    range: 'custom', date_from: week.from, date_to: week.to,
-  });
-
-  const days = [];
-  for (let date = week.from; date <= week.to; date = shiftDate(date, 1)) {
-    const exact = await getDayTargetClicks(linkId, date);
-    const chart = visitors.find(v => String(v.date).startsWith(date))?.totalVisits ?? null;
-    days.push({ date, chart, ...exact });
-  }
-
-  // Exemple de visite brute, pour vérifier le format du pays
-  const sample = await fetchGAML('/analytics/traffic', {
-    link_id: linkId, range: 'custom', date_from: week.to, date_to: week.to,
-    timezone: TIMEZONE, hide_bots: true,
-  });
-  return { week, days, top10, sample: sample.slice(0, 2) };
-}
-
-module.exports = { getLinks, getYesterdayClicks, getLastWeekClicks, lastWeek, debugLastWeek };
+module.exports = { getLinks, getYesterdayClicks, getLastWeekClicks, lastWeek };

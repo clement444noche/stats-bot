@@ -168,37 +168,6 @@ const COMMANDS = {
   '!compta': client => sendComptaReport(client),
 };
 
-// ── Temporaire : !compta-verif <VA> → données brutes de ses liens ──────────
-client.on(Events.MessageCreate, async (message) => {
-  if (message.author.bot) return;
-  const match = message.content.trim().match(/^!compta-verif\s+(.+)$/);
-  if (!match) return;
-  if (!isAdmin(message)) return message.reply({ content: '❌ Réservé aux admins.' });
-
-  try {
-    const va = match[1].trim().toLowerCase();
-    const links = (await gaml.getLinks()).filter(l => (l.va ?? '').toLowerCase() === va);
-    if (!links.length) return message.reply(`❌ Aucun lien actif avec la note « ${match[1]} ».`);
-
-    for (const link of links) {
-      await message.channel.send(`⏳ Vérification de ${link.label} (≈ 15 s)...`);
-      const d = await gaml.debugLastWeek(link.id);
-      const sum = key => d.days.reduce((s, r) => s + (r[key] ?? 0), 0);
-      const out = `LIEN ${link.label} — semaine ${d.week.from} → ${d.week.to}\n\n`
-        + `jour       | graphique | comptées | US/UK/AU/CA\n`
-        + d.days.map(r => `${r.date} | ${String(r.chart ?? '?').padStart(9)} | ${String(r.total).padStart(8)} | ${r.target}`).join('\n')
-        + `\nTOTAL      | ${String(sum('chart')).padStart(9)} | ${String(sum('total')).padStart(8)} | ${sum('target')}`
-        + `\n\nAncienne méthode (top 10 pays) : ${d.top10}`
-        + `\nNouvelle méthode (visite par visite) : ${sum('target')}`
-        + `\n\nExemple de visite brute :\n${JSON.stringify(d.sample, null, 1).slice(0, 600)}`;
-      await message.channel.send('```\n' + out.slice(0, 1900) + '\n```');
-    }
-  } catch (err) {
-    console.error('[!compta-verif] Erreur:', err);
-    await message.reply(`❌ Erreur : \`${err.message}\``);
-  }
-});
-
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot) return;
   const command = message.content.trim();
