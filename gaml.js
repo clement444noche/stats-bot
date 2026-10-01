@@ -123,12 +123,9 @@ function lastWeek() {
   return { from: shiftDate(thisMonday, -7), to: shiftDate(thisMonday, -1) };
 }
 
-// GAML exclut la date de fin (« jusqu'au début de date_to ») : on demande
-// jusqu'au lundi suivant pour inclure tout le dimanche (vérifié sur le dashboard)
+// date_to est inclus par GAML (vérifié : les visites par jour s'arrêtent au dimanche)
 function getLastWeekClicks(linkId, week = lastWeek()) {
-  return getTargetClicks(linkId, {
-    range: 'custom', date_from: week.from, date_to: shiftDate(week.to, 1),
-  });
+  return getTargetClicks(linkId, { range: 'custom', date_from: week.from, date_to: week.to });
 }
 
 // Temporaire : données brutes d'un lien sur la semaine dernière (vérif compta)
@@ -136,7 +133,7 @@ async function debugLastWeek(linkId) {
   const week = lastWeek();
   const period = {
     link_id: linkId, range: 'custom', date_from: week.from,
-    date_to: shiftDate(week.to, 1), timezone: TIMEZONE, hide_bots: true,
+    date_to: week.to, timezone: TIMEZONE, hide_bots: true,
   };
   const [countries, visitors] = await Promise.all([
     fetchGAML('/analytics/countries', period),
