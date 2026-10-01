@@ -131,4 +131,18 @@ function getLastWeekClicks(linkId, week = lastWeek()) {
   });
 }
 
-module.exports = { getLinks, getYesterdayClicks, getLastWeekClicks, lastWeek };
+// Temporaire : données brutes d'un lien sur la semaine dernière (vérif compta)
+async function debugLastWeek(linkId) {
+  const week = lastWeek();
+  const period = {
+    link_id: linkId, range: 'custom', date_from: week.from,
+    date_to: shiftDate(week.to, 1), timezone: TIMEZONE, hide_bots: true,
+  };
+  const [countries, visitors] = await Promise.all([
+    fetchGAML('/analytics/countries', period),
+    fetchGAML('/analytics/visitors', period),
+  ]);
+  return { week, countries, visitors, matched: countries.filter(isTargetCountry) };
+}
+
+module.exports = { getLinks, getYesterdayClicks, getLastWeekClicks, lastWeek, debugLastWeek };

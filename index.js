@@ -168,6 +168,37 @@ const COMMANDS = {
   '!compta': client => sendComptaReport(client),
 };
 
+// ── Temporaire : !compta-verif <VA> → données brutes de ses liens ──────────
+client.on(Events.MessageCreate, async (message) => {
+  if (message.author.bot) return;
+  const match = message.content.trim().match(/^!compta-verif\s+(.+)$/);
+  if (!match) return;
+  if (!isAdmin(message)) return message.reply({ content: '❌ Réservé aux admins.' });
+
+  try {
+    const va = match[1].trim().toLowerCase();
+    const links = (await gaml.getLinks()).filter(l => (l.va ?? '').toLowerCase() === va);
+    if (!links.length) return message.reply(`❌ Aucun lien actif avec la note « ${match[1]} ».`);
+
+    for (const link of links) {
+      const d = await gaml.debugLastWeek(link.id);
+      const totalPays = d.countries.reduce((s, r) => s + (r.count ?? 0), 0);
+      const totalJours = d.visitors.reduce((s, r) => s + (r.totalVisits ?? 0), 0);
+      const out = `LIEN ${link.label} — semaine ${d.week.from} → ${d.week.to}\n`
+        + `Visites par jour (total ${totalJours}) :\n`
+        + d.visitors.map(r => `  ${r.date} : ${r.totalVisits}`).join('\n')
+        + `\n\nPays (total ${totalPays}, ${d.countries.length} pays) — 15 premiers :\n`
+        + d.countries.slice(0, 15).map(r => `  ${JSON.stringify(r.country)} : ${r.count} (${r.percentage})`).join('\n')
+        + `\n\nPays retenus par le bot : ${d.matched.map(r => `${r.country}=${r.count}`).join(', ')}`
+        + ` → ${d.matched.reduce((s, r) => s + (r.count ?? 0), 0)}`;
+      await message.channel.send('```\n' + out.slice(0, 1900) + '\n```');
+    }
+  } catch (err) {
+    console.error('[!compta-verif] Erreur:', err);
+    await message.reply(`❌ Erreur : \`${err.message}\``);
+  }
+});
+
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot) return;
   const command = message.content.trim();
