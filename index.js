@@ -17,34 +17,69 @@ function yesterdayLabel() {
   return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', timeZone: 'Europe/Paris' });
 }
 
+// ── Grille des primes hebdo (par lien, bornes incluses) ─────────────────────
+// 0–330 clics : 0,02 $/clic ; au-delà, montant fixe par tranche
+const PRIME_TRANCHES = [
+  { min: 5000, prime: 275 },
+  { min: 4400, prime: 230 },
+  { min: 3800, prime: 190 },
+  { min: 3200, prime: 155 },
+  { min: 2600, prime: 130 },
+  { min: 2000, prime: 110 },
+  { min: 1331, prime: 85 },
+  { min: 1001, prime: 65 },
+  { min: 871, prime: 45 },
+  { min: 731, prime: 30 },
+  { min: 601, prime: 20 },
+  { min: 471, prime: 10 },
+  { min: 331, prime: 7 },
+];
+
+// Prime en centimes (évite les arrondis des nombres à virgule)
+function primeCents(clicks) {
+  const tranche = PRIME_TRANCHES.find(t => clicks >= t.min);
+  return tranche ? tranche.prime * 100 : clicks * 2;
+}
+
+function dollars(cents) {
+  return cents % 100 === 0
+    ? `${cents / 100} $`
+    : `${(cents / 100).toFixed(2).replace('.', ',')} $`;
+}
+
+const plural = n => `${n} clic${n !== 1 ? 's' : ''}`;
+
 // ── Clics par VA → message Discord ───────────────────────────────────────────
-// entries : [{ va, clicks }] avec clicks = null si erreur pour ce lien
-async function postReport(client, channelId, title, entries) {
+// entries : [{ va, clicks }] avec clicks = null si erreur pour ce lien.
+// withPrimes : prime calculée lien par lien puis additionnée par VA.
+async function postReport(client, channelId, title, entries, { withPrimes = false } = {}) {
+  // Erreurs levées : affichées par la commande manuelle, loguées par le cron
   if (!channelId) {
-    console.warn(`[${title}] Salon non défini, rapport annulé.`);
-    return;
+    throw new Error(`${title} : variable du salon non définie sur Railway.`);
   }
 
   const channel = await client.channels.fetch(channelId).catch(() => null);
   if (!channel) {
-    console.error(`[${title}] Salon introuvable :`, channelId);
-    return;
+    throw new Error(`${title} : salon ${channelId} introuvable (le bot y a-t-il accès ?).`);
   }
 
-  // Clics additionnés par VA (un VA peut avoir plusieurs liens)
+  // Liens regroupés par VA (un VA peut avoir plusieurs liens)
   const byVA = new Map();
   for (const { va, clicks } of entries) {
     const name = va ?? '❓ Sans VA';
-    const entry = byVA.get(name) ?? { name, clicks: 0, errors: 0 };
+    const entry = byVA.get(name) ?? { name, links: [], errors: 0 };
     if (clicks === null) entry.errors++;
-    else entry.clicks += clicks;
+    else entry.links.push(clicks);
     byVA.set(name, entry);
   }
 
+  // Un seul lien en erreur suffit à afficher le VA en erreur : un chiffre
+  // partiel passerait inaperçu (et fausserait la prime)
   const results = [...byVA.values()].map(e => ({
     name: e.name,
-    // Tous les liens du VA en erreur → erreur ; sinon on garde ce qui a répondu
-    clicks: e.errors && e.clicks === 0 ? null : e.clicks,
+    links: e.links,
+    clicks: e.errors ? null : e.links.reduce((s, c) => s + c, 0),
+    prime: e.errors ? null : e.links.reduce((s, c) => s + primeCents(c), 0),
   }));
 
   // Tri par clics décroissants (les erreurs en bas)
@@ -54,22 +89,36 @@ async function postReport(client, channelId, title, entries) {
     return b.clicks - a.clicks;
   });
 
-  const teamTotal = results.reduce((sum, r) => sum + (r.clicks ?? 0), 0);
+  const ok = results.filter(r => r.clicks !== null);
+  const errors = results.length - ok.length;
+  const teamTotal = ok.reduce((sum, r) => sum + r.clicks, 0);
+  const primesTotal = ok.reduce((sum, r) => sum + r.prime, 0);
 
   const lines = results.map(r => {
     if (r.clicks === null) return `👤 **${r.name}** → ❌ erreur`;
-    return `👤 **${r.name}** → ${r.clicks} clic${r.clicks !== 1 ? 's' : ''}`;
+    let line = `👤 **${r.name}** → ${plural(r.clicks)}`;
+    if (withPrimes) {
+      line += ` → 💵 **${dollars(r.prime)}**`;
+      if (r.links.length > 1) {
+        line += ` _(${r.links.map(c => `${c} → ${dollars(primeCents(c))}`).join(' + ')})_`;
+      }
+    }
+    return line;
   });
+
+  let footer = `Total équipe : ${plural(teamTotal)}`;
+  if (withPrimes) footer += ` • Total primes : ${dollars(primesTotal)}`;
+  if (errors) footer += ` • ⚠️ ${errors} VA en erreur, relancer la commande`;
 
   const embed = new EmbedBuilder()
     .setTitle(title)
     .setDescription(lines.join('\n') || '_Aucun lien actif_')
-    .setColor(0x57F287)
-    .setFooter({ text: `Total équipe : ${teamTotal} clics` })
+    .setColor(errors ? 0xED4245 : 0x57F287)
+    .setFooter({ text: footer })
     .setTimestamp();
 
   await channel.send({ embeds: [embed] });
-  console.log(`[${title}] Rapport envoyé — ${teamTotal} clics équipe`);
+  console.log(`[${title}] Rapport envoyé — ${footer}`);
 }
 
 // ── Rapport GetAllMyLinks (VAs Insta) → salon #clics ─────────────────────────
@@ -108,7 +157,7 @@ async function sendComptaReport(client) {
   }
   await postReport(client, process.env.COMPTA_CHANNEL_ID,
     `💰 Compta Insta (🇺🇸🇬🇧🇦🇺🇨🇦) — Semaine du lundi ${frDate(week.from)} au dimanche ${frDate(week.to)}`,
-    entries);
+    entries, { withPrimes: true });
 }
 
 // ── Rapport GetMySocial (VAs Twitter) → salon Twitter ───────────────────────
