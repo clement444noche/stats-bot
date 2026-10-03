@@ -134,7 +134,7 @@ async function sendGamlReport(client) {
     }
   }
   await postReport(client, process.env.REPORT_CHANNEL_ID,
-    `📊 Rapport Insta (🇺🇸🇬🇧🇦🇺🇨🇦) — Hier (${yesterdayLabel()})`, entries);
+    `📊 Rapport Insta (🇺🇸🇬🇧🇨🇦🇦🇺🇳🇿🇮🇪) — Hier (${yesterdayLabel()})`, entries);
 }
 
 // ── Rapport compta hebdo Insta → salon compta (lundi 00h10) ─────────────────
@@ -156,7 +156,7 @@ async function sendComptaReport(client) {
     }
   }
   await postReport(client, process.env.COMPTA_CHANNEL_ID,
-    `💰 Compta Insta (🇺🇸🇬🇧🇦🇺🇨🇦) — Semaine du lundi ${frDate(week.from)} au dimanche ${frDate(week.to)}`,
+    `💰 Compta Insta (🇺🇸🇬🇧🇨🇦🇦🇺🇳🇿🇮🇪) — Semaine du lundi ${frDate(week.from)} au dimanche ${frDate(week.to)}`,
     entries, { withPrimes: true });
 }
 
@@ -168,7 +168,7 @@ async function sendGmsReport(client) {
   // null = erreur GetMySocial pour ce lien (affichée « ❌ erreur »)
   const entries = links.map(l => ({ va: l.va, clicks: clicks.get(l.id) ?? null }));
   await postReport(client, process.env.GMS_REPORT_CHANNEL_ID,
-    `🐦 Rapport Twitter (🇺🇸🇬🇧🇦🇺🇨🇦) — Hier (${yesterdayLabel()})`, entries);
+    `🐦 Rapport Twitter (🇺🇸🇬🇧🇨🇦🇦🇺🇳🇿🇮🇪) — Hier (${yesterdayLabel()})`, entries);
 }
 
 // ── Client Discord ───────────────────────────────────────────────────────────
@@ -217,65 +217,6 @@ const COMMANDS = {
   '!compta': client => sendComptaReport(client),
 };
 
-// ── !compta-simu : impact d'ajouter la Nouvelle-Zélande et l'Irlande ───────
-// Simulation sur la semaine dernière, ne change rien à la compta
-async function sendComptaSimu(message) {
-  const week = gaml.lastWeek();
-  const links = await gaml.getLinks();
-  await message.reply(`⏳ Simulation sur ${links.length} liens (≈ ${Math.ceil(links.length * 7 * 1.1 / 60)} min)...`);
-
-  const byVA = new Map();
-  let errors = 0;
-  for (const link of links) {
-    const name = link.va ?? '❓ Sans VA';
-    const e = byVA.get(name) ?? { name, now: 0, plus: 0, primeNow: 0, primePlus: 0, nz: 0, ie: 0 };
-    try {
-      const days = await gaml.getLastWeekDetail(link.id, week);
-      const now = days.reduce((s, d) => s + d.target, 0);
-      const nz = days.reduce((s, d) => s + d.byCountry.NZ, 0);
-      const ie = days.reduce((s, d) => s + d.byCountry.IE, 0);
-      e.now += now; e.plus += now + nz + ie; e.nz += nz; e.ie += ie;
-      e.primeNow += primeCents(now); e.primePlus += primeCents(now + nz + ie);
-    } catch (err) {
-      console.error(`[Simu] Erreur pour ${name} (${link.label}):`, err.message);
-      errors++;
-    }
-    byVA.set(name, e);
-  }
-
-  const rows = [...byVA.values()].sort((a, b) => b.now - a.now);
-  const changed = rows.filter(r => r.primePlus !== r.primeNow);
-  const sum = f => rows.reduce((s, r) => s + f(r), 0);
-
-  const lines = rows
-    .filter(r => r.nz + r.ie > 0)
-    .map(r => `${r.name} : ${r.now} → ${r.plus} clics (+${r.nz} NZ, +${r.ie} IE)`
-      + (r.primePlus !== r.primeNow ? ` | prime ${dollars(r.primeNow)} → ${dollars(r.primePlus)} ⬆️` : ''));
-
-  const out = `SIMULATION — semaine du ${frDate(week.from)} au ${frDate(week.to)}\n`
-    + `Pays actuels : US/UK/CA/AU — simulés : + Nouvelle-Zélande + Irlande\n\n`
-    + `Clics équipe : ${sum(r => r.now)} → ${sum(r => r.plus)} (+${sum(r => r.nz)} NZ, +${sum(r => r.ie)} IE)\n`
-    + `Primes totales : ${dollars(sum(r => r.primeNow))} → ${dollars(sum(r => r.primePlus))}\n`
-    + `VAs qui changent de tranche : ${changed.length}\n`
-    + (errors ? `⚠️ ${errors} lien(s) en erreur, résultats incomplets\n` : '')
-    + `\nVAs avec des clics NZ/IE :\n${lines.join('\n') || '(aucun)'}`;
-
-  for (let i = 0; i < out.length; i += 1900) {
-    await message.channel.send('```\n' + out.slice(i, i + 1900) + '\n```');
-  }
-}
-
-client.on(Events.MessageCreate, async (message) => {
-  if (message.author.bot || message.content.trim() !== '!compta-simu') return;
-  if (!isAdmin(message)) return message.reply({ content: '❌ Réservé aux admins.' });
-  try {
-    await sendComptaSimu(message);
-  } catch (err) {
-    console.error('[!compta-simu] Erreur:', err);
-    await message.reply(`❌ Erreur : \`${err.message}\``);
-  }
-});
-
 // ── !compta-verif <VA> : détail de la compta d'un VA, jour par jour ─────────
 // Pour répondre à une contestation : visites, clics par pays et prime par lien
 client.on(Events.MessageCreate, async (message) => {
@@ -302,12 +243,14 @@ client.on(Events.MessageCreate, async (message) => {
       const prime = primeCents(clicks);
       primeTotal += prime;
 
+      const COLS = ['US', 'UK', 'CA', 'AU', 'NZ', 'IE'];
       const row = (date, total, c, target) =>
-        `${date} | ${String(total).padStart(6)} | ${String(c.US).padStart(4)} | ${String(c.UK).padStart(3)} | ${String(c.CA).padStart(3)} | ${String(c.AU).padStart(3)} | ${target}`;
-      const totals = { US: sum(d => d.byCountry.US), UK: sum(d => d.byCountry.UK), CA: sum(d => d.byCountry.CA), AU: sum(d => d.byCountry.AU) };
+        `${date} | ${String(total).padStart(6)} | ${String(c.US).padStart(4)} | `
+        + COLS.slice(1).map(k => String(c[k]).padStart(3)).join(' | ') + ` | ${target}`;
+      const totals = Object.fromEntries(COLS.map(k => [k, sum(d => d.byCountry[k])]));
 
       const out = `${name} — lien ${link.label} — semaine du ${frDate(week.from)} au ${frDate(week.to)}\n\n`
-        + `jour       | visites |   US |  UK |  CA |  AU | clics retenus\n`
+        + `jour       | visites |   US |  UK |  CA |  AU |  NZ |  IE | clics retenus\n`
         + days.map(d => row(d.date, d.total, d.byCountry, d.target)).join('\n')
         + `\n${row('TOTAL     ', sum(d => d.total), totals, clicks)}`
         + `\n\nPrime de ce lien : ${clicks} clics → ${dollars(prime)}`;

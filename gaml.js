@@ -79,10 +79,12 @@ async function getLinks() {
   }));
 }
 
-// Pays retenus : US, UK, Australie, Canada (code ISO ou nom complet selon la réponse)
+// Pays retenus : US, UK, Australie, Canada, Nouvelle-Zélande, Irlande
+// (code ISO ou nom complet selon la réponse)
 const TARGET_COUNTRIES = new Set([
-  'US', 'GB', 'UK', 'AU', 'CA',
+  'US', 'GB', 'UK', 'AU', 'CA', 'NZ', 'IE',
   'UNITED STATES', 'UNITED STATES OF AMERICA', 'UNITED KINGDOM', 'AUSTRALIA', 'CANADA',
+  'NEW ZEALAND', 'IRELAND',
 ]);
 
 function isTargetCountry(row) {
@@ -96,7 +98,6 @@ const COUNTRY_SHORT = {
   'GB': 'UK', 'UK': 'UK', 'UNITED KINGDOM': 'UK',
   'CA': 'CA', 'CANADA': 'CA',
   'AU': 'AU', 'AUSTRALIA': 'AU',
-  // Pas comptés dans les clics retenus : mesurés seulement (!compta-simu)
   'NZ': 'NZ', 'NEW ZEALAND': 'NZ',
   'IE': 'IE', 'IRELAND': 'IE',
 };
