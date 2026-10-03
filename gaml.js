@@ -96,6 +96,9 @@ const COUNTRY_SHORT = {
   'GB': 'UK', 'UK': 'UK', 'UNITED KINGDOM': 'UK',
   'CA': 'CA', 'CANADA': 'CA',
   'AU': 'AU', 'AUSTRALIA': 'AU',
+  // Pas comptés dans les clics retenus : mesurés seulement (!compta-simu)
+  'NZ': 'NZ', 'NEW ZEALAND': 'NZ',
+  'IE': 'IE', 'IRELAND': 'IE',
 };
 
 function targetCountryOf(row) {
@@ -125,7 +128,7 @@ async function getDayTargetClicks(linkId, date) {
   if (visits.length >= TRAFFIC_CAP) {
     throw new Error(`plus de ${TRAFFIC_CAP} visites le ${date}, comptage incomplet`);
   }
-  const byCountry = { US: 0, UK: 0, CA: 0, AU: 0 };
+  const byCountry = { US: 0, UK: 0, CA: 0, AU: 0, NZ: 0, IE: 0 };
   for (const v of visits) {
     const c = targetCountryOf(v);
     if (c) byCountry[c]++;
