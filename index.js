@@ -217,6 +217,50 @@ const COMMANDS = {
   '!compta': client => sendComptaReport(client),
 };
 
+// ── !compta-verif <VA> : détail de la compta d'un VA, jour par jour ─────────
+// Pour répondre à une contestation : visites, clics par pays et prime par lien
+client.on(Events.MessageCreate, async (message) => {
+  if (message.author.bot) return;
+  const text = message.content.trim();
+  if (!/^!compta-verif\b/.test(text)) return;
+  if (!isAdmin(message)) return message.reply({ content: '❌ Réservé aux admins.' });
+
+  const name = text.replace(/^!compta-verif/, '').trim();
+  if (!name) return message.reply('Écris le nom du VA après la commande, par exemple : `!compta-verif Mickael`');
+
+  try {
+    const links = (await gaml.getLinks()).filter(l => (l.va ?? '').toLowerCase() === name.toLowerCase());
+    if (!links.length) return message.reply(`❌ Aucun lien actif avec la note « ${name} ».`);
+
+    const week = gaml.lastWeek();
+    await message.reply(`⏳ Vérification de ${name} (${links.length} lien${links.length > 1 ? 's' : ''}, ≈ ${links.length * 10} s)...`);
+
+    let primeTotal = 0;
+    for (const link of links) {
+      const days = await gaml.getLastWeekDetail(link.id, week);
+      const sum = f => days.reduce((s, d) => s + f(d), 0);
+      const clicks = sum(d => d.target);
+      const prime = primeCents(clicks);
+      primeTotal += prime;
+
+      const row = (date, total, c, target) =>
+        `${date} | ${String(total).padStart(6)} | ${String(c.US).padStart(4)} | ${String(c.UK).padStart(3)} | ${String(c.CA).padStart(3)} | ${String(c.AU).padStart(3)} | ${target}`;
+      const totals = { US: sum(d => d.byCountry.US), UK: sum(d => d.byCountry.UK), CA: sum(d => d.byCountry.CA), AU: sum(d => d.byCountry.AU) };
+
+      const out = `${name} — lien ${link.label} — semaine du ${frDate(week.from)} au ${frDate(week.to)}\n\n`
+        + `jour       | visites |   US |  UK |  CA |  AU | clics retenus\n`
+        + days.map(d => row(d.date, d.total, d.byCountry, d.target)).join('\n')
+        + `\n${row('TOTAL     ', sum(d => d.total), totals, clicks)}`
+        + `\n\nPrime de ce lien : ${clicks} clics → ${dollars(prime)}`;
+      await message.channel.send('```\n' + out.slice(0, 1900) + '\n```');
+    }
+    if (links.length > 1) await message.channel.send(`💵 **Prime totale de ${name} : ${dollars(primeTotal)}**`);
+  } catch (err) {
+    console.error('[!compta-verif] Erreur:', err);
+    await message.reply(`❌ Erreur : \`${err.message}\``);
+  }
+});
+
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot) return;
   const command = message.content.trim();

@@ -90,6 +90,22 @@ function isTargetCountry(row) {
     .some(v => v && TARGET_COUNTRIES.has(String(v).trim().toUpperCase()));
 }
 
+// Pays cible d'une visite, ramené à US / UK / CA / AU (null si autre pays)
+const COUNTRY_SHORT = {
+  'US': 'US', 'UNITED STATES': 'US', 'UNITED STATES OF AMERICA': 'US',
+  'GB': 'UK', 'UK': 'UK', 'UNITED KINGDOM': 'UK',
+  'CA': 'CA', 'CANADA': 'CA',
+  'AU': 'AU', 'AUSTRALIA': 'AU',
+};
+
+function targetCountryOf(row) {
+  for (const v of [row.country_code, row.countryCode, row.code, row.country]) {
+    const short = v && COUNTRY_SHORT[String(v).trim().toUpperCase()];
+    if (short) return short;
+  }
+  return null;
+}
+
 // /analytics/countries ne renvoie que le top 10 des pays (un pays cible hors
 // top 10 serait perdu) : on compte donc les visites une à une via /traffic.
 // Plafond de /analytics/traffic par appel : au-delà, des visites manqueraient
@@ -109,9 +125,15 @@ async function getDayTargetClicks(linkId, date) {
   if (visits.length >= TRAFFIC_CAP) {
     throw new Error(`plus de ${TRAFFIC_CAP} visites le ${date}, comptage incomplet`);
   }
+  const byCountry = { US: 0, UK: 0, CA: 0, AU: 0 };
+  for (const v of visits) {
+    const c = targetCountryOf(v);
+    if (c) byCountry[c]++;
+  }
   return {
     total: visits.length,
     target: visits.filter(isTargetCountry).length,
+    byCountry,
   };
 }
 
@@ -147,4 +169,13 @@ async function getLastWeekClicks(linkId, week = lastWeek()) {
   return sum;
 }
 
-module.exports = { getLinks, getYesterdayClicks, getLastWeekClicks, lastWeek };
+// Détail jour par jour de la semaine (pour !compta-verif)
+async function getLastWeekDetail(linkId, week = lastWeek()) {
+  const days = [];
+  for (let date = week.from; date <= week.to; date = shiftDate(date, 1)) {
+    days.push({ date, ...(await getDayTargetClicks(linkId, date)) });
+  }
+  return days;
+}
+
+module.exports = { getLinks, getYesterdayClicks, getLastWeekClicks, getLastWeekDetail, lastWeek };
