@@ -171,6 +171,19 @@ async function sendGmsReport(client) {
     `🐦 Rapport Twitter (🇺🇸🇬🇧🇨🇦🇦🇺🇳🇿🇮🇪) — Hier (${yesterdayLabel()})`, entries);
 }
 
+// ── Point du jour Twitter (12h, 17h, 22h) : clics depuis minuit ─────────────
+async function sendGmsTodayReport(client) {
+  const links = await gms.getLinks();
+  const clicks = await gms.getTodayTargetClicks(links.map(l => l.id));
+  const entries = links.map(l => ({ va: l.va, clicks: clicks.get(l.id) ?? null }));
+  const now = new Date();
+  const day = now.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', timeZone: 'Europe/Paris' });
+  const time = now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris' })
+    .replace(':', 'h');
+  await postReport(client, process.env.GMS_REPORT_CHANNEL_ID,
+    `🐦 Clics Twitter du jour (🇺🇸🇬🇧🇨🇦🇦🇺🇳🇿🇮🇪) — Aujourd'hui (${day}) à ${time}`, entries);
+}
+
 // ── Client Discord ───────────────────────────────────────────────────────────
 const client = new Client({
   intents: [
@@ -195,6 +208,16 @@ client.once(Events.ClientReady, () => {
 
   console.log('⏰ Rapports quotidiens programmés à 8h (Paris)');
 
+  // ── Cron : point du jour Twitter à 12h, 17h et 22h heure de Paris ───────
+  cron.schedule('0 12,17,22 * * *', () => {
+    console.log('[Cron] Déclenchement du point du jour Twitter...');
+    sendGmsTodayReport(client).catch(err => console.error('[Cron] Erreur point du jour Twitter:', err));
+  }, {
+    timezone: 'Europe/Paris',
+  });
+
+  console.log('⏰ Point du jour Twitter programmé à 12h, 17h et 22h (Paris)');
+
   // ── Cron : compta hebdo Insta le lundi à 00h10 heure de Paris ───────────
   cron.schedule('10 0 * * 1', () => {
     console.log('[Cron] Déclenchement du rapport compta hebdo...');
@@ -214,6 +237,7 @@ function isAdmin(message) {
 const COMMANDS = {
   '!rapport': client => sendGamlReport(client),
   '!rapport-twitter': client => sendGmsReport(client),
+  '!twitter-jour': client => sendGmsTodayReport(client),
   '!compta': client => sendComptaReport(client),
 };
 

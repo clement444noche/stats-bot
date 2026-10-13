@@ -178,12 +178,12 @@ async function getCountryClicks(linkId, period) {
     .reduce((sum, row) => sum + (clicksOf(row) ?? row.count ?? row.value ?? 0), 0);
 }
 
-// Clics d'hier US/UK/AU/CA pour une liste de liens → Map(linkId → clics ou null)
-async function getYesterdayTargetClicks(linkIds) {
+// Clics des pays ciblés sur une période → Map(linkId → clics ou null si erreur)
+async function getTargetClicks(linkIds, period) {
   const result = new Map();
   for (const linkId of linkIds) {
     try {
-      result.set(linkId, await getCountryClicks(linkId, yesterdayParams()));
+      result.set(linkId, await getCountryClicks(linkId, period));
     } catch (err) {
       console.error(`[GMS] Erreur pays pour ${linkId}:`, err.message);
       result.set(linkId, null);
@@ -192,7 +192,17 @@ async function getYesterdayTargetClicks(linkIds) {
   return result;
 }
 
+// Clics d'hier (rapport de 8h)
+function getYesterdayTargetClicks(linkIds) {
+  return getTargetClicks(linkIds, yesterdayParams());
+}
+
+// Clics du jour en cours, de minuit à maintenant (messages de 12h, 17h, 22h)
+function getTodayTargetClicks(linkIds) {
+  return getTargetClicks(linkIds, { timeframe: 'today', timezone: TIMEZONE });
+}
+
 module.exports = {
   connect, listTools, callTool, getLinks, getYesterdayClicks, getClicks,
-  getYesterdayTargetClicks, yesterdayParams, daysAgo, TIMEZONE,
+  getYesterdayTargetClicks, getTodayTargetClicks, yesterdayParams, daysAgo, TIMEZONE,
 };
