@@ -65,11 +65,13 @@ async function postReport(client, channelId, title, entries, { withPrimes = fals
 
   // Liens regroupés par VA (un VA peut avoir plusieurs liens)
   const byVA = new Map();
-  for (const { va, clicks } of entries) {
+  for (const { va, clicks, reason } of entries) {
     const name = va ?? '❓ Sans VA';
-    const entry = byVA.get(name) ?? { name, links: [], errors: 0 };
-    if (clicks === null) entry.errors++;
-    else entry.links.push(clicks);
+    const entry = byVA.get(name) ?? { name, links: [], errors: 0, reasons: new Set() };
+    if (clicks === null) {
+      entry.errors++;
+      if (reason) entry.reasons.add(reason);
+    } else entry.links.push(clicks);
     byVA.set(name, entry);
   }
 
@@ -78,6 +80,7 @@ async function postReport(client, channelId, title, entries, { withPrimes = fals
   const results = [...byVA.values()].map(e => ({
     name: e.name,
     links: e.links,
+    reasons: [...e.reasons],
     clicks: e.errors ? null : e.links.reduce((s, c) => s + c, 0),
     prime: e.errors ? null : e.links.reduce((s, c) => s + primeCents(c), 0),
   }));
@@ -95,7 +98,9 @@ async function postReport(client, channelId, title, entries, { withPrimes = fals
   const primesTotal = ok.reduce((sum, r) => sum + r.prime, 0);
 
   const lines = results.map(r => {
-    if (r.clicks === null) return `👤 **${r.name}** → ❌ erreur`;
+    if (r.clicks === null) {
+      return `👤 **${r.name}** → ❌ erreur${r.reasons.length ? ` _(${r.reasons.join(', ')})_` : ''}`;
+    }
     let line = `👤 **${r.name}** → ${plural(r.clicks)}`;
     if (withPrimes) {
       line += ` → 💵 **${dollars(r.prime)}**`;
@@ -121,18 +126,49 @@ async function postReport(client, channelId, title, entries, { withPrimes = fals
   console.log(`[${title}] Rapport envoyé — ${footer}`);
 }
 
+// Raison courte d'une erreur GAML, affichée dans le rapport
+function errorReason(err) {
+  const msg = String(err?.message ?? err);
+  if (/GAML 429/.test(msg)) return 'limite de requêtes';
+  const status = msg.match(/GAML (\d{3})/);
+  if (status) return `GetAllMyLinks ${status[1]}`;
+  if (/visites le/.test(msg)) return 'trop de visites';
+  if (/fetch failed|ECONN|ETIMEDOUT|socket/i.test(msg)) return 'connexion';
+  return msg.slice(0, 40);
+}
+
+// Clics de chaque lien, avec jusqu'à 2 nouvelles passes sur les liens en
+// erreur (après 1 min de pause : limite GAML partagée avec le SaaS, panne passagère)
+const RETRY_PASSES = 2;
+const RETRY_PAUSE_MS = 60000;
+
+async function collectClicks(links, getClicks, tag) {
+  const results = new Map();
+  let pending = links;
+  for (let pass = 0; pass <= RETRY_PASSES && pending.length; pass++) {
+    if (pass > 0) {
+      console.warn(`[${tag}] ${pending.length} lien(s) en erreur, nouvel essai dans 1 min (passe ${pass + 1})`);
+      await new Promise(r => setTimeout(r, RETRY_PAUSE_MS));
+    }
+    const failed = [];
+    for (const link of pending) {
+      try {
+        results.set(link.id, { va: link.va, clicks: await getClicks(link) });
+      } catch (err) {
+        console.error(`[${tag}] Erreur pour ${link.va} (${link.label}):`, err.message);
+        results.set(link.id, { va: link.va, clicks: null, reason: errorReason(err) });
+        failed.push(link);
+      }
+    }
+    pending = failed;
+  }
+  return links.map(l => results.get(l.id));
+}
+
 // ── Rapport GetAllMyLinks (VAs Insta) → salon #clics ─────────────────────────
 async function sendGamlReport(client) {
   const links = await gaml.getLinks();
-  const entries = [];
-  for (const link of links) {
-    try {
-      entries.push({ va: link.va, clicks: await gaml.getYesterdayClicks(link.id) });
-    } catch (err) {
-      console.error(`[GAML] Erreur pour ${link.va} (${link.label}):`, err.message);
-      entries.push({ va: link.va, clicks: null });
-    }
-  }
+  const entries = await collectClicks(links, l => gaml.getYesterdayClicks(l.id), 'GAML');
   await postReport(client, process.env.REPORT_CHANNEL_ID,
     `📊 Rapport Insta (🇺🇸🇬🇧🇨🇦🇦🇺🇳🇿🇮🇪) — Hier (${yesterdayLabel()})`, entries);
 }
@@ -146,15 +182,7 @@ function frDate(iso) {
 async function sendComptaReport(client) {
   const week = gaml.lastWeek();
   const links = await gaml.getLinks();
-  const entries = [];
-  for (const link of links) {
-    try {
-      entries.push({ va: link.va, clicks: await gaml.getLastWeekClicks(link.id, week) });
-    } catch (err) {
-      console.error(`[Compta] Erreur pour ${link.va} (${link.label}):`, err.message);
-      entries.push({ va: link.va, clicks: null });
-    }
-  }
+  const entries = await collectClicks(links, l => gaml.getLastWeekClicks(l.id, week), 'Compta');
   await postReport(client, process.env.COMPTA_CHANNEL_ID,
     `💰 Compta Insta (🇺🇸🇬🇧🇨🇦🇦🇺🇳🇿🇮🇪) — Semaine du lundi ${frDate(week.from)} au dimanche ${frDate(week.to)}`,
     entries, { withPrimes: true });
