@@ -93,6 +93,8 @@ function planPastilles(channels, clicksByVA, today) {
       item.status = 'erreur';
     } else {
       const color = colorFor(clicks);
+      // Déjà 🔴 la semaine dernière et encore 🔴 → 2 semaines ou plus
+      item.redStreak = marker === RED && color === RED;
       item.newName = `${color}${base}`;
       item.marker = color;
       item.status = item.newName !== ch.name ? 'modifié' : 'inchangé';
@@ -130,6 +132,7 @@ async function updatePastilles(guild, results, { dryRun = false } = {}) {
 
   const lines = [];
   const problems = [];
+  const redStreaks = [];
 
   for (const category of categories.values()) {
     const channels = guild.channels.cache
@@ -138,6 +141,7 @@ async function updatePastilles(guild, results, { dryRun = false } = {}) {
     const { plan, ordered } = planPastilles(channels, clicksByVA, today);
 
     for (const item of plan) {
+      if (item.redStreak) redStreaks.push(`${item.newName} (${item.clicks} clics)`);
       if (item.status === 'modifié') {
         if (!dryRun) {
           try {
@@ -171,7 +175,7 @@ async function updatePastilles(guild, results, { dryRun = false } = {}) {
     if (moved) lines.push(`↕️ ${category.name} : salons triés 🟢 → 🟡 → 🔴`);
   }
 
-  return { lines, problems };
+  return { lines, problems, redStreaks };
 }
 
 module.exports = { updatePastilles, planPastilles, parseChannelName, colorFor, normalize, flagEndIso };

@@ -212,9 +212,10 @@ async function sendComptaReport(client) {
 async function sendPastilles(client, results, { dryRun = false } = {}) {
   const channel = await getChannel(client, process.env.COMPTA_CHANNEL_ID, 'Pastilles');
   try {
-    const { lines, problems } = await pastilles.updatePastilles(channel.guild, results, { dryRun });
+    const { lines, problems, redStreaks } = await pastilles.updatePastilles(channel.guild, results, { dryRun });
     const body = [
       ...(lines.length ? lines : ['_Aucune pastille à changer_']),
+      ...(redStreaks.length ? ['', '🚨 **En rouge depuis 2 semaines ou plus :**', ...redStreaks] : []),
       ...(problems.length ? ['', ...problems] : []),
     ].join('\n');
     const embed = new EmbedBuilder()
