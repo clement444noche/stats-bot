@@ -10,6 +10,7 @@ const {
 const cron = require('node-cron');
 const gaml = require('./gaml');
 const gms = require('./gms');
+const pastilles = require('./pastilles');
 
 // ── Label "Hier (29 sept.)" en heure de Paris ────────────────────────────────
 function yesterdayLabel() {
@@ -49,20 +50,9 @@ function dollars(cents) {
 
 const plural = n => `${n} clic${n !== 1 ? 's' : ''}`;
 
-// ── Clics par VA → message Discord ───────────────────────────────────────────
+// ── Clics par lien → clics par VA ───────────────────────────────────────────
 // entries : [{ va, clicks }] avec clicks = null si erreur pour ce lien.
-// withPrimes : prime calculée lien par lien puis additionnée par VA.
-async function postReport(client, channelId, title, entries, { withPrimes = false } = {}) {
-  // Erreurs levées : affichées par la commande manuelle, loguées par le cron
-  if (!channelId) {
-    throw new Error(`${title} : variable du salon non définie sur Railway.`);
-  }
-
-  const channel = await client.channels.fetch(channelId).catch(() => null);
-  if (!channel) {
-    throw new Error(`${title} : salon ${channelId} introuvable (le bot y a-t-il accès ?).`);
-  }
-
+function groupByVA(entries) {
   // Liens regroupés par VA (un VA peut avoir plusieurs liens)
   const byVA = new Map();
   for (const { va, clicks, reason } of entries) {
@@ -91,6 +81,28 @@ async function postReport(client, channelId, title, entries, { withPrimes = fals
     if (b.clicks === null) return -1;
     return b.clicks - a.clicks;
   });
+  return results;
+}
+
+async function getChannel(client, channelId, title) {
+  // Erreurs levées : affichées par la commande manuelle, loguées par le cron
+  if (!channelId) {
+    throw new Error(`${title} : variable du salon non définie sur Railway.`);
+  }
+
+  const channel = await client.channels.fetch(channelId).catch(() => null);
+  if (!channel) {
+    throw new Error(`${title} : salon ${channelId} introuvable (le bot y a-t-il accès ?).`);
+  }
+  return channel;
+}
+
+// ── Clics par VA → message Discord ───────────────────────────────────────────
+// withPrimes : prime calculée lien par lien puis additionnée par VA.
+// Renvoie les clics par VA (utilisés pour les pastilles).
+async function postReport(client, channelId, title, entries, { withPrimes = false } = {}) {
+  const channel = await getChannel(client, channelId, title);
+  const results = groupByVA(entries);
 
   const ok = results.filter(r => r.clicks !== null);
   const errors = results.length - ok.length;
@@ -124,6 +136,7 @@ async function postReport(client, channelId, title, entries, { withPrimes = fals
 
   await channel.send({ embeds: [embed] });
   console.log(`[${title}] Rapport envoyé — ${footer}`);
+  return results;
 }
 
 // Raison courte d'une erreur GAML, affichée dans le rapport
@@ -179,13 +192,47 @@ function frDate(iso) {
   return `${d}/${m}/${y}`;
 }
 
-async function sendComptaReport(client) {
+async function getLastWeekEntries() {
   const week = gaml.lastWeek();
   const links = await gaml.getLinks();
   const entries = await collectClicks(links, l => gaml.getLastWeekClicks(l.id, week), 'Compta');
-  await postReport(client, process.env.COMPTA_CHANNEL_ID,
+  return { week, entries };
+}
+
+async function sendComptaReport(client) {
+  const { week, entries } = await getLastWeekEntries();
+  const results = await postReport(client, process.env.COMPTA_CHANNEL_ID,
     `💰 Compta Insta (🇺🇸🇬🇧🇨🇦🇦🇺🇳🇿🇮🇪) — Semaine du lundi ${frDate(week.from)} au dimanche ${frDate(week.to)}`,
     entries, { withPrimes: true });
+  await sendPastilles(client, results)
+    .catch(err => console.error('[Pastilles] Erreur:', err));
+}
+
+// ── Pastilles des salons 1:1 VA (après la compta) → récap dans le salon compta
+async function sendPastilles(client, results, { dryRun = false } = {}) {
+  const channel = await getChannel(client, process.env.COMPTA_CHANNEL_ID, 'Pastilles');
+  try {
+    const { lines, problems } = await pastilles.updatePastilles(channel.guild, results, { dryRun });
+    const body = [
+      ...(lines.length ? lines : ['_Aucune pastille à changer_']),
+      ...(problems.length ? ['', ...problems] : []),
+    ].join('\n');
+    const embed = new EmbedBuilder()
+      .setTitle(dryRun ? '🧪 Pastilles — simulation (rien n\'a été modifié)' : '🎨 Pastilles des salons VA mises à jour')
+      .setDescription(body.slice(0, 4000))
+      .setColor(problems.length ? 0xFEE75C : 0x57F287)
+      .setTimestamp();
+    await channel.send({ embeds: [embed] });
+  } catch (err) {
+    await channel.send(`❌ Pastilles non mises à jour : \`${err.message}\``);
+    throw err;
+  }
+}
+
+// Commandes !pastilles / !pastilles-simu : recalcule la semaine sans reposter la compta
+async function runPastilles(client, dryRun) {
+  const { entries } = await getLastWeekEntries();
+  await sendPastilles(client, groupByVA(entries), { dryRun });
 }
 
 // ── Rapport GetMySocial (VAs Twitter) → salon Twitter ───────────────────────
@@ -267,6 +314,8 @@ const COMMANDS = {
   '!rapport-twitter': client => sendGmsReport(client),
   '!twitter-jour': client => sendGmsTodayReport(client),
   '!compta': client => sendComptaReport(client),
+  '!pastilles': client => runPastilles(client, false),
+  '!pastilles-simu': client => runPastilles(client, true),
 };
 
 // ── !compta-verif <VA> : détail de la compta d'un VA, jour par jour ─────────
