@@ -204,18 +204,22 @@ async function sendComptaReport(client) {
   const results = await postReport(client, process.env.COMPTA_CHANNEL_ID,
     `💰 Compta Insta (🇺🇸🇬🇧🇨🇦🇦🇺🇳🇿🇮🇪) — Semaine du lundi ${frDate(week.from)} au dimanche ${frDate(week.to)}`,
     entries, { withPrimes: true });
-  await sendPastilles(client, results)
+  await sendPastilles(client, results, week.from)
     .catch(err => console.error('[Pastilles] Erreur:', err));
 }
 
 // ── Pastilles des salons 1:1 VA (après la compta) → récap dans le salon compta
-async function sendPastilles(client, results, { dryRun = false } = {}) {
+async function sendPastilles(client, results, monday, { dryRun = false } = {}) {
   const channel = await getChannel(client, process.env.COMPTA_CHANNEL_ID, 'Pastilles');
   try {
-    const { lines, problems, redStreaks } = await pastilles.updatePastilles(channel.guild, results, { dryRun });
+    const { lines, problems, redStreaks, redExits } =
+      await pastilles.updatePastilles(channel, results, monday, { dryRun });
     const body = [
       ...(lines.length ? lines : ['_Aucune pastille à changer_']),
-      ...(redStreaks.length ? ['', '🚨 **En rouge depuis 2 semaines ou plus :**', ...redStreaks] : []),
+      ...(redStreaks.length
+        ? ['', '🚨 **En rouge depuis 2 semaines ou plus** _(clics de cette semaine ← semaines d\'avant)_ :', ...redStreaks]
+        : []),
+      ...(redExits.length ? ['', '✅ **Sortis du rouge :**', ...redExits] : []),
       ...(problems.length ? ['', ...problems] : []),
     ].join('\n');
     const embed = new EmbedBuilder()
@@ -232,8 +236,8 @@ async function sendPastilles(client, results, { dryRun = false } = {}) {
 
 // Commandes !pastilles / !pastilles-simu : recalcule la semaine sans reposter la compta
 async function runPastilles(client, dryRun) {
-  const { entries } = await getLastWeekEntries();
-  await sendPastilles(client, groupByVA(entries), { dryRun });
+  const { week, entries } = await getLastWeekEntries();
+  await sendPastilles(client, groupByVA(entries), week.from, { dryRun });
 }
 
 // ── Rapport GetMySocial (VAs Twitter) → salon Twitter ───────────────────────

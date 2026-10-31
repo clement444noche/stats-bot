@@ -93,8 +93,8 @@ function planPastilles(channels, clicksByVA, today) {
       item.status = 'erreur';
     } else {
       const color = colorFor(clicks);
-      // Déjà 🔴 la semaine dernière et encore 🔴 → 2 semaines ou plus
-      item.redStreak = marker === RED && color === RED;
+      // Déjà 🔴 la semaine dernière (pastille avant mise à jour)
+      item.wasRed = marker === RED;
       item.newName = `${color}${base}`;
       item.marker = color;
       item.status = item.newName !== ch.name ? 'modifié' : 'inchangé';
@@ -119,11 +119,71 @@ function todayParis() {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Paris' });
 }
 
+function shiftDate(isoDate, n) {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+// ── Historique : clics par VA des anciennes comptas postées par le bot ──────
+// Renvoie Map(lundi YYYY-MM-DD → Map(nom normalisé → clics | null))
+const HISTORY_PAGES = 5; // 5 × 100 messages ≈ plusieurs mois de comptas
+
+function parseComptaEmbed(embed) {
+  const week = embed.title?.match(/Compta Insta.*Semaine du lundi (\d{2})\/(\d{2})\/(\d{4})/);
+  if (!week || !embed.description) return null;
+  const clicks = new Map();
+  for (const line of embed.description.split('\n')) {
+    const m = line.match(/^👤 \*\*(.+?)\*\* → (?:(\d+) clics?|❌)/);
+    if (m) clicks.set(normalize(m[1]), m[2] === undefined ? null : Number(m[2]));
+  }
+  return { monday: `${week[3]}-${week[2]}-${week[1]}`, clicks };
+}
+
+async function readComptaHistory(channel, botId) {
+  const history = new Map();
+  let before;
+  for (let page = 0; page < HISTORY_PAGES; page++) {
+    const messages = await channel.messages.fetch({ limit: 100, before });
+    if (!messages.size) break;
+    // Du plus récent au plus ancien : la 1re compta vue pour une semaine est
+    // la dernière postée (un !compta relancé remplace la précédente)
+    for (const msg of messages.values()) {
+      if (msg.author.id !== botId) continue;
+      for (const embed of msg.embeds) {
+        const parsed = parseComptaEmbed(embed);
+        if (parsed && !history.has(parsed.monday)) history.set(parsed.monday, parsed.clicks);
+      }
+    }
+    before = messages.last().id;
+  }
+  return history;
+}
+
+// Semaines rouges consécutives d'un VA en remontant depuis `monday` :
+// [clics de cette semaine, de la précédente, ...] tant que < 50.
+// S'arrête sur une semaine absente, une erreur ou ≥ 50 clics.
+function redWeeks(history, key, monday) {
+  const weeks = [];
+  for (let m = monday; history.get(m)?.has(key); m = shiftDate(m, -7)) {
+    const clicks = history.get(m).get(key);
+    if (clicks === null || colorFor(clicks) !== RED) break;
+    weeks.push(clicks);
+  }
+  return weeks;
+}
+
 // Applique les pastilles sur le serveur du salon compta, puis renvoie un récap.
 // results : [{ name, clicks }] (clics de la semaine par VA, null si erreur)
-async function updatePastilles(guild, results, { dryRun = false } = {}) {
+// channel : salon compta (pour l'historique) ; monday : lundi de la semaine comptée
+async function updatePastilles(channel, results, monday, { dryRun = false } = {}) {
+  const guild = channel.guild;
   const clicksByVA = new Map(results.map(r => [normalize(r.name), r.clicks]));
   const today = todayParis();
+
+  // Historique des comptas + semaine en cours (prioritaire sur le message posté)
+  const history = await readComptaHistory(channel, channel.client.user.id);
+  history.set(monday, clicksByVA);
 
   await guild.channels.fetch();
   const categories = guild.channels.cache.filter(c =>
@@ -133,6 +193,7 @@ async function updatePastilles(guild, results, { dryRun = false } = {}) {
   const lines = [];
   const problems = [];
   const redStreaks = [];
+  const redExits = [];
 
   for (const category of categories.values()) {
     const channels = guild.channels.cache
@@ -141,7 +202,19 @@ async function updatePastilles(guild, results, { dryRun = false } = {}) {
     const { plan, ordered } = planPastilles(channels, clicksByVA, today);
 
     for (const item of plan) {
-      if (item.redStreak) redStreaks.push(`${item.newName} (${item.clicks} clics)`);
+      const key = normalize(item.base);
+      if (item.wasRed && item.marker === RED) {
+        // Pastille 🔴 deux lundis de suite → alerte, avec le détail des semaines
+        const weeks = redWeeks(history, key, monday);
+        const count = weeks.length >= 2 ? `${weeks.length} semaines` : '2 semaines ou plus (historique incomplet)';
+        redStreaks.push(`${item.newName} — **${count}** _(${weeks.join(' ← ') || item.clicks} clics)_`);
+      } else if (item.wasRed && item.status === 'modifié') {
+        // Sorti du rouge : prévenir seulement s'il était en alerte (≥ 2 semaines)
+        const weeks = redWeeks(history, key, shiftDate(monday, -7));
+        if (weeks.length >= 2) {
+          redExits.push(`${item.newName} — ${item.clicks} clics après **${weeks.length} semaines** en rouge`);
+        }
+      }
       if (item.status === 'modifié') {
         if (!dryRun) {
           try {
@@ -175,7 +248,10 @@ async function updatePastilles(guild, results, { dryRun = false } = {}) {
     if (moved) lines.push(`↕️ ${category.name} : salons triés 🟢 → 🟡 → 🔴`);
   }
 
-  return { lines, problems, redStreaks };
+  return { lines, problems, redStreaks, redExits };
 }
 
-module.exports = { updatePastilles, planPastilles, parseChannelName, colorFor, normalize, flagEndIso };
+module.exports = {
+  updatePastilles, planPastilles, parseChannelName, colorFor, normalize, flagEndIso,
+  parseComptaEmbed, redWeeks,
+};
