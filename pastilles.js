@@ -70,12 +70,28 @@ function flagEndIso({ day, month }, today) {
   return candidates.reduce((a, b) => (dist(b) < dist(a) ? b : a));
 }
 
+// Sépare le nom du VA d'une annotation ajoutée à la main, gardée telle quelle :
+// « killiano-last-chance-1-11 » → { name: 'killiano', suffix: '-last-chance-1-11' }
+// (le plus long début de nom qui correspond à un VA de la compta)
+function splitVA(base, clicksByVA) {
+  const parts = base.split('-');
+  for (let n = parts.length; n > 0; n--) {
+    const name = parts.slice(0, n).join('-');
+    if (clicksByVA.has(normalize(name))) {
+      return { name, suffix: base.slice(name.length) };
+    }
+  }
+  return { name: base, suffix: '' };
+}
+
 // Calcule les nouveaux noms et l'ordre des salons, sans rien modifier.
 // channels : [{ id, name, position }] ; clicksByVA : Map(nom normalisé → clics | null)
 // today : YYYY-MM-DD (heure de Paris)
 function planPastilles(channels, clicksByVA, today) {
   const plan = channels.map(ch => {
-    const { base, marker, endDate } = parseChannelName(ch.name);
+    const parsed = parseChannelName(ch.name);
+    const { marker, endDate } = parsed;
+    const { name: base, suffix } = splitVA(parsed.base, clicksByVA);
     const key = normalize(base);
     const has = clicksByVA.has(key);
     const clicks = has ? clicksByVA.get(key) : null;
@@ -95,7 +111,7 @@ function planPastilles(channels, clicksByVA, today) {
       const color = colorFor(clicks);
       // Déjà 🔴 la semaine dernière (pastille avant mise à jour)
       item.wasRed = marker === RED;
-      item.newName = `${color}${base}`;
+      item.newName = `${color}${base}${suffix}`;
       item.marker = color;
       item.status = item.newName !== ch.name ? 'modifié' : 'inchangé';
     }
