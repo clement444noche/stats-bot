@@ -11,6 +11,7 @@ const cron = require('node-cron');
 const gaml = require('./gaml');
 const gms = require('./gms');
 const pastilles = require('./pastilles');
+const onboarding = require('./onboarding');
 
 // ── Label "Hier (29 sept.)" en heure de Paris ────────────────────────────────
 function yesterdayLabel() {
@@ -270,12 +271,23 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers, // onboarding : détecter le rôle « VA Insta »
   ],
 });
+
+onboarding.register(client);
 
 client.once(Events.ClientReady, () => {
   console.log(`✅ Bot connecté en tant que ${client.user.tag}`);
   console.log(`📡 Serveurs : ${client.guilds.cache.size}`);
+
+  // Membres en cache : sans ça, Discord n'envoie pas l'ajout de rôle
+  // des membres jamais vus depuis le démarrage
+  for (const guild of client.guilds.cache.values()) {
+    guild.members.fetch()
+      .then(m => console.log(`👥 ${guild.name} : ${m.size} membres en cache (onboarding « ${onboarding.ROLE_NAME} »)`))
+      .catch(err => console.error('[Onboarding] Membres illisibles (Server Members Intent activé ?) :', err.message));
+  }
 
   // ── Cron : rapports quotidiens à 8h heure de Paris ──────────────────────
   cron.schedule('0 8 * * *', async () => {
@@ -365,6 +377,35 @@ client.on(Events.MessageCreate, async (message) => {
     if (links.length > 1) await message.channel.send(`💵 **Prime totale de ${name} : ${dollars(primeTotal)}**`);
   } catch (err) {
     console.error('[!compta-verif] Erreur:', err);
+    await message.reply(`❌ Erreur : \`${err.message}\``);
+  }
+});
+
+// ── !onboarding-apercu : affiche le message de bienvenue ici, sans rien créer
+// ── !onboarding @VA [@Manager] : lance l'onboarding à la main (salon + message)
+client.on(Events.MessageCreate, async (message) => {
+  if (message.author.bot || !message.guild) return;
+  const text = message.content.trim();
+  if (!/^!onboarding(-apercu)?/.test(text)) return;
+  if (!isAdmin(message)) return message.reply({ content: '❌ Réservé aux admins.' });
+
+  try {
+    if (text.startsWith('!onboarding-apercu')) {
+      const target = message.mentions.members.first() ?? message.member;
+      return await message.channel.send({
+        content: onboarding.buildMessage(message.guild, target, message.member),
+        allowedMentions: { parse: [] }, // aperçu : personne n'est notifié
+      });
+    }
+    // !onboarding @VA [@Manager] : mentions dans l'ordre du message
+    const ids = [...text.matchAll(/<@!?(\d+)>/g)].map(m => m[1]);
+    const target = ids[0] && message.mentions.members.get(ids[0]);
+    if (!target) return message.reply('Mentionne le VA (et son manager si ce n’est pas toi), par exemple : `!onboarding @James @Carl`');
+    const manager = (ids[1] && message.mentions.members.get(ids[1])) || message.member;
+    const { channel, created } = await onboarding.onboard(target, { manager });
+    await message.reply(`✅ Message envoyé dans <#${channel.id}>${created ? ' (salon créé)' : ' (salon existant)'}.`);
+  } catch (err) {
+    console.error('[!onboarding] Erreur:', err);
     await message.reply(`❌ Erreur : \`${err.message}\``);
   }
 });
