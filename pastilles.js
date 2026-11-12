@@ -8,8 +8,9 @@
 
 const { ChannelType } = require('discord.js');
 
-// Catégories concernées : « Canaux 1:1 VA (Carl) », etc.
-const CATEGORY_PATTERN = /^canaux 1:1 va/i;
+// Catégories concernées : « Canaux 1:1 VA (Carl) », « Canaux 1:1 (Hermes) »…
+// (pas « Canaux 1:1 Manageur » ni « Canaux 1:1 Twitter (Lola) »)
+const CATEGORY_PATTERN = /^canaux 1:1 (va )?\(/i;
 
 const GREEN = '🟢';
 const YELLOW = '🟡';
@@ -204,7 +205,7 @@ async function updatePastilles(channel, results, monday, { dryRun = false } = {}
   await guild.channels.fetch();
   const categories = guild.channels.cache.filter(c =>
     c.type === ChannelType.GuildCategory && CATEGORY_PATTERN.test(c.name));
-  if (!categories.size) throw new Error('Pastilles : aucune catégorie « Canaux 1:1 VA » trouvée.');
+  if (!categories.size) throw new Error('Pastilles : aucune catégorie « Canaux 1:1 (…) » trouvée.');
 
   const lines = [];
   const problems = [];
