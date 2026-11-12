@@ -12,6 +12,7 @@ const gaml = require('./gaml');
 const gms = require('./gms');
 const pastilles = require('./pastilles');
 const onboarding = require('./onboarding');
+const subs = require('./subs');
 
 // ── Label "Hier (29 sept.)" en heure de Paris ────────────────────────────────
 function yesterdayLabel() {
@@ -276,6 +277,7 @@ const client = new Client({
 });
 
 onboarding.register(client);
+subs.register(client, isAdmin); // export CSV Infloww déposé dans un salon « subs »
 
 client.once(Events.ClientReady, () => {
   console.log(`✅ Bot connecté en tant que ${client.user.tag}`);
