@@ -132,9 +132,11 @@ function buildMessage(guild, member, manager) {
     return `• ${ch ? `<#${ch.id}>` : `#${g.label}`} — ${g.desc}`;
   });
 
+  // Jamais de « je » : le VA pourrait croire que le bot est son manager
+  const mgr = manager ? `<@${manager.id}>` : 'ton manager';
   const managerLine = manager
-    ? `Moi c'est <@${manager.id}>, ton manager 🫡 Je suis là pour t'accompagner afin que tu puisses bien performer et progresser au sein de l'agence.`
-    : 'Ton manager va te rejoindre ici très vite : il est là pour t\'accompagner afin que tu puisses bien performer et progresser au sein de l\'agence.';
+    ? `👤 Ton manager est ${mgr}. Il est là pour t'accompagner afin que tu puisses bien performer et progresser au sein de l'agence.`
+    : '👤 Ton manager va te rejoindre ici très vite. Il est là pour t\'accompagner afin que tu puisses bien performer et progresser au sein de l\'agence.';
 
   return [
     `Hey <@${member.id}> 👋`,
@@ -149,9 +151,9 @@ function buildMessage(guild, member, manager) {
     ...guides,
     '',
     '🚀 **La suite**',
-    'Une fois que tu as tout lu, fais-moi signe ici ✅ et on passera ensemble à la création de tes comptes.',
+    `Une fois que tu as tout lu, préviens ${mgr} ici ✅ et vous passerez ensemble à la création de tes comptes.`,
     '',
-    '❓ **Une question ?** N\'hésite surtout pas à venir m\'en parler, je suis là pour t\'aider 💪',
+    `❓ **Une question ?** N'hésite surtout pas à en parler à ${mgr}, il est là pour t'aider 💪`,
     '',
     'Bienvenue dans l\'équipe et bonne intégration ! 🔥',
   ].join('\n');
