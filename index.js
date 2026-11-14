@@ -135,11 +135,19 @@ async function getChannel(client, channelId, title) {
 // ── Clics par VA → message Discord ───────────────────────────────────────────
 // withPrimes : prime calculée lien par lien puis additionnée par VA.
 // withRetained : clics retenus de la veille + cumul de la semaine (#clics).
+// retainedOnly : uniquement les clics retenus (salon des VAs, #clics-va).
 // Renvoie les clics par VA (utilisés pour les pastilles).
 async function postReport(client, channelId, title, entries,
-  { withPrimes = false, withRetained = false } = {}) {
+  { withPrimes = false, withRetained = false, retainedOnly = false } = {}) {
   const channel = await getChannel(client, channelId, title);
   const results = groupByVA(entries);
+  if (retainedOnly) {
+    results.sort((a, b) => {
+      if (a.clicks === null) return 1;
+      if (b.clicks === null) return -1;
+      return b.retained - a.retained;
+    });
+  }
 
   const ok = results.filter(r => r.clicks !== null);
   const errors = results.length - ok.length;
@@ -149,6 +157,9 @@ async function postReport(client, channelId, title, entries,
   const lines = results.map(r => {
     if (r.clicks === null) {
       return `👤 **${r.name}** → ❌ erreur${r.reasons.length ? ` _(${r.reasons.join(', ')})_` : ''}`;
+    }
+    if (retainedOnly) {
+      return `👤 **${r.name}** → ${r.retained} clics retenus • semaine : ${r.weekRetained} clics retenus`;
     }
     let line = `👤 **${r.name}** → ${plural(r.clicks)}`;
     if (withRetained) {
@@ -166,6 +177,9 @@ async function postReport(client, channelId, title, entries,
   });
 
   let footer = `Total équipe : ${plural(teamTotal)}`;
+  if (retainedOnly) {
+    footer = `Total équipe : ${ok.reduce((sum, r) => sum + r.retained, 0)} clics retenus`;
+  }
   if (withPrimes) {
     const retainedTotal = ok.reduce((sum, r) => sum + r.links.reduce((s, c) => s + retainedClicks(c), 0), 0);
     footer += ` (${retainedTotal} retenus) • Total primes : ${dollars(primesTotal)}`
@@ -259,8 +273,13 @@ async function sendGamlReport(client) {
       retained: applyCoef(day, coef), week, weekRetained: applyCoef(week, coef),
     };
   });
-  await postReport(client, process.env.REPORT_CHANNEL_ID,
-    `📊 Rapport Insta (🇺🇸🇬🇧🇨🇦🇦🇺🇳🇿🇮🇪) — Hier (${yesterdayLabel()})`, entries, { withRetained: true });
+  const title = `📊 Rapport Insta (🇺🇸🇬🇧🇨🇦🇦🇺🇳🇿🇮🇪) — Hier (${yesterdayLabel()})`;
+  await postReport(client, process.env.REPORT_CHANNEL_ID, title, entries, { withRetained: true });
+
+  // Même rapport pour les VAs (#clics-va), uniquement avec les clics retenus
+  if (process.env.VA_REPORT_CHANNEL_ID) {
+    await postReport(client, process.env.VA_REPORT_CHANNEL_ID, title, entries, { retainedOnly: true });
+  }
 }
 
 // ── Rapport compta hebdo Insta → salon compta (lundi 00h10) ─────────────────
