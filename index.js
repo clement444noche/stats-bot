@@ -44,6 +44,24 @@ function primeCents(clicks) {
   return tranche ? tranche.prime * 100 : clicks * 2;
 }
 
+// ── Coefficient par palier (salon #clics uniquement, primes inchangées) ─────
+// Coeff (en %) du palier atteint par les clics de la semaine en cours (par
+// lien), appliqué à tous ses clics — même calcul que la simulation Excel
+const CLICS_COEFS = [
+  { min: 5000, coef: 60 },
+  { min: 4400, coef: 70 },
+  { min: 3800, coef: 75 },
+  { min: 2600, coef: 85 },
+  { min: 2000, coef: 70 },
+  { min: 1331, coef: 85 },
+  { min: 1001, coef: 80 },
+  { min: 601, coef: 85 },
+  { min: 471, coef: 90 },
+];
+
+const coefOf = weekClicks => CLICS_COEFS.find(t => weekClicks >= t.min)?.coef ?? 100;
+const applyCoef = (clicks, coef) => Math.floor(clicks * coef / 100);
+
 function dollars(cents) {
   return cents % 100 === 0
     ? `${cents / 100} $`
@@ -54,16 +72,23 @@ const plural = n => `${n} clic${n !== 1 ? 's' : ''}`;
 
 // ── Clics par lien → clics par VA ───────────────────────────────────────────
 // entries : [{ va, clicks }] avec clicks = null si erreur pour ce lien.
+// Champs optionnels (rapport #clics) : retained, week, weekRetained.
 function groupByVA(entries) {
   // Liens regroupés par VA (un VA peut avoir plusieurs liens)
   const byVA = new Map();
-  for (const { va, clicks, reason } of entries) {
+  for (const { va, clicks, reason, ...extra } of entries) {
     const name = va ?? '❓ Sans VA';
-    const entry = byVA.get(name) ?? { name, links: [], errors: 0, reasons: new Set() };
+    const entry = byVA.get(name)
+      ?? { name, links: [], errors: 0, reasons: new Set(), retained: 0, week: 0, weekRetained: 0 };
     if (clicks === null) {
       entry.errors++;
       if (reason) entry.reasons.add(reason);
-    } else entry.links.push(clicks);
+    } else {
+      entry.links.push(clicks);
+      entry.retained += extra.retained ?? 0;
+      entry.week += extra.week ?? 0;
+      entry.weekRetained += extra.weekRetained ?? 0;
+    }
     byVA.set(name, entry);
   }
 
@@ -75,6 +100,9 @@ function groupByVA(entries) {
     reasons: [...e.reasons],
     clicks: e.errors ? null : e.links.reduce((s, c) => s + c, 0),
     prime: e.errors ? null : e.links.reduce((s, c) => s + primeCents(c), 0),
+    retained: e.retained,
+    week: e.week,
+    weekRetained: e.weekRetained,
   }));
 
   // Tri par clics décroissants (les erreurs en bas)
@@ -101,8 +129,10 @@ async function getChannel(client, channelId, title) {
 
 // ── Clics par VA → message Discord ───────────────────────────────────────────
 // withPrimes : prime calculée lien par lien puis additionnée par VA.
+// withRetained : clics retenus de la veille + cumul de la semaine (#clics).
 // Renvoie les clics par VA (utilisés pour les pastilles).
-async function postReport(client, channelId, title, entries, { withPrimes = false } = {}) {
+async function postReport(client, channelId, title, entries,
+  { withPrimes = false, withRetained = false } = {}) {
   const channel = await getChannel(client, channelId, title);
   const results = groupByVA(entries);
 
@@ -116,6 +146,9 @@ async function postReport(client, channelId, title, entries, { withPrimes = fals
       return `👤 **${r.name}** → ❌ erreur${r.reasons.length ? ` _(${r.reasons.join(', ')})_` : ''}`;
     }
     let line = `👤 **${r.name}** → ${plural(r.clicks)}`;
+    if (withRetained) {
+      line += ` (${r.retained} retenus) • semaine : ${r.week} (${r.weekRetained} retenus)`;
+    }
     if (withPrimes) {
       line += ` → 💵 **${dollars(r.prime)}**`;
       if (r.links.length > 1) {
@@ -127,16 +160,34 @@ async function postReport(client, channelId, title, entries, { withPrimes = fals
 
   let footer = `Total équipe : ${plural(teamTotal)}`;
   if (withPrimes) footer += ` • Total primes : ${dollars(primesTotal)}`;
+  if (withRetained) {
+    const retainedTotal = ok.reduce((sum, r) => sum + r.retained, 0);
+    footer += ` (${retainedTotal} retenus) • Retenus = coefficient du palier atteint depuis lundi`;
+  }
   if (errors) footer += ` • ⚠️ ${errors} VA en erreur, relancer la commande`;
 
-  const embed = new EmbedBuilder()
-    .setTitle(title)
-    .setDescription(lines.join('\n') || '_Aucun lien actif_')
-    .setColor(errors ? 0xED4245 : 0x57F287)
-    .setFooter({ text: footer })
-    .setTimestamp();
+  // Discord limite la description d'un embed à 4096 caractères : au-delà,
+  // la liste est coupée en plusieurs messages (titre sur le 1er, total sur le dernier)
+  const chunks = [];
+  let current = '';
+  for (const line of lines.length ? lines : ['_Aucun lien actif_']) {
+    if (current && current.length + line.length + 1 > 4000) {
+      chunks.push(current);
+      current = '';
+    }
+    current += (current ? '\n' : '') + line;
+  }
+  chunks.push(current);
 
-  await channel.send({ embeds: [embed] });
+  for (const [i, chunk] of chunks.entries()) {
+    const embed = new EmbedBuilder()
+      .setDescription(chunk)
+      .setColor(errors ? 0xED4245 : 0x57F287);
+    if (i === 0) embed.setTitle(chunks.length > 1 ? `${title} (1/${chunks.length})` : title);
+    else embed.setTitle(`Suite (${i + 1}/${chunks.length})`);
+    if (i === chunks.length - 1) embed.setFooter({ text: footer }).setTimestamp();
+    await channel.send({ embeds: [embed] });
+  }
   console.log(`[${title}] Rapport envoyé — ${footer}`);
   return results;
 }
@@ -183,9 +234,19 @@ async function collectClicks(links, getClicks, tag) {
 // ── Rapport GetAllMyLinks (VAs Insta) → salon #clics ─────────────────────────
 async function sendGamlReport(client) {
   const links = await gaml.getLinks();
-  const entries = await collectClicks(links, l => gaml.getYesterdayClicks(l.id), 'GAML');
+  const raw = await collectClicks(links, l => gaml.getYesterdayAndWeekClicks(l.id), 'GAML');
+  // Coeff choisi lien par lien avec le cumul de la semaine en cours
+  const entries = raw.map(e => {
+    if (e.clicks === null) return e;
+    const { day, week } = e.clicks;
+    const coef = coefOf(week);
+    return {
+      va: e.va, clicks: day,
+      retained: applyCoef(day, coef), week, weekRetained: applyCoef(week, coef),
+    };
+  });
   await postReport(client, process.env.REPORT_CHANNEL_ID,
-    `📊 Rapport Insta (🇺🇸🇬🇧🇨🇦🇦🇺🇳🇿🇮🇪) — Hier (${yesterdayLabel()})`, entries);
+    `📊 Rapport Insta (🇺🇸🇬🇧🇨🇦🇦🇺🇳🇿🇮🇪) — Hier (${yesterdayLabel()})`, entries, { withRetained: true });
 }
 
 // ── Rapport compta hebdo Insta → salon compta (lundi 00h10) ─────────────────

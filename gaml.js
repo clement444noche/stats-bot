@@ -156,6 +156,37 @@ async function getYesterdayClicks(linkId) {
   return (await getDayTargetClicks(linkId, shiftDate(todayParis(), -1))).target;
 }
 
+// Lundi de la semaine d'une date (YYYY-MM-DD)
+function mondayOf(isoDate) {
+  const dow = new Date(`${isoDate}T00:00:00Z`).getUTCDay(); // 0 = dimanche
+  return shiftDate(isoDate, -((dow + 6) % 7));
+}
+
+// Clics d'une journée passée, gardés en mémoire (une journée finie ne change
+// plus) : chaque matin, seule la veille est redemandée à GAML
+const dayCache = new Map();
+
+async function getCachedDayClicks(linkId, date) {
+  const key = `${linkId}|${date}`;
+  if (!dayCache.has(key)) {
+    dayCache.set(key, (await getDayTargetClicks(linkId, date)).target);
+    // On ne garde que les 14 derniers jours
+    const oldest = shiftDate(todayParis(), -14);
+    for (const k of dayCache.keys()) if (k.split('|')[1] < oldest) dayCache.delete(k);
+  }
+  return dayCache.get(key);
+}
+
+// Clics de la veille + cumul de sa semaine (du lundi à la veille incluse)
+async function getYesterdayAndWeekClicks(linkId) {
+  const yesterday = shiftDate(todayParis(), -1);
+  let week = 0;
+  for (let date = mondayOf(yesterday); date <= yesterday; date = shiftDate(date, 1)) {
+    week += await getCachedDayClicks(linkId, date);
+  }
+  return { day: await getCachedDayClicks(linkId, yesterday), week };
+}
+
 // Semaine précédente complète, du lundi au dimanche inclus, heure de Paris
 function lastWeek() {
   const today = todayParis();
@@ -182,4 +213,6 @@ async function getLastWeekDetail(linkId, week = lastWeek()) {
   return days;
 }
 
-module.exports = { getLinks, getYesterdayClicks, getLastWeekClicks, getLastWeekDetail, lastWeek };
+module.exports = {
+  getLinks, getYesterdayClicks, getYesterdayAndWeekClicks, getLastWeekClicks, getLastWeekDetail, lastWeek,
+};
