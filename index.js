@@ -217,13 +217,21 @@ async function getLastWeekEntries() {
   return { week, entries };
 }
 
+const comptaTitle = week =>
+  `💰 Compta Insta (🇺🇸🇬🇧🇨🇦🇦🇺🇳🇿🇮🇪) — Semaine du lundi ${frDate(week.from)} au dimanche ${frDate(week.to)}`;
+
 async function sendComptaReport(client) {
   const { week, entries } = await getLastWeekEntries();
   const results = await postReport(client, process.env.COMPTA_CHANNEL_ID,
-    `💰 Compta Insta (🇺🇸🇬🇧🇨🇦🇦🇺🇳🇿🇮🇪) — Semaine du lundi ${frDate(week.from)} au dimanche ${frDate(week.to)}`,
-    entries, { withPrimes: true });
+    comptaTitle(week), entries, { withPrimes: true });
   await sendPastilles(client, results, week.from)
     .catch(err => console.error('[Pastilles] Erreur:', err));
+}
+
+// Aperçu de la compta dans le salon de la commande (pastilles non touchées)
+async function sendComptaPreview(client, channelId) {
+  const { week, entries } = await getLastWeekEntries();
+  await postReport(client, channelId, `🧪 Aperçu — ${comptaTitle(week)}`, entries, { withPrimes: true });
 }
 
 // ── Pastilles des salons 1:1 VA (après la compta) → récap dans le salon compta
@@ -349,6 +357,7 @@ const COMMANDS = {
   '!rapport-twitter': client => sendGmsReport(client),
   '!twitter-jour': client => sendGmsTodayReport(client),
   '!compta': client => sendComptaReport(client),
+  '!compta-apercu': (client, message) => sendComptaPreview(client, message.channel.id),
   '!pastilles': client => runPastilles(client, false),
   '!pastilles-simu': client => runPastilles(client, true),
 };
@@ -439,7 +448,7 @@ client.on(Events.MessageCreate, async (message) => {
 
   try {
     await message.reply('⏳ Génération du rapport...');
-    await COMMANDS[command](client);
+    await COMMANDS[command](client, message);
   } catch (err) {
     console.error(`[${command}] Erreur:`, err);
     await message.reply(`❌ Erreur : \`${err.message}\``);
