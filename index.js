@@ -45,8 +45,8 @@ function primeCents(clicks) {
 }
 
 // ── Coefficient par palier (salon #clics uniquement, primes inchangées) ─────
-// Coeff (en %) du palier atteint par les clics de la semaine en cours (par
-// lien), appliqué à tous ses clics — même calcul que la simulation Excel
+// Coeff (en %) du palier atteint par le rythme de la semaine en cours (par
+// lien), appliqué à tous ses clics — même résultat final que la simulation Excel
 const CLICS_COEFS = [
   { min: 5000, coef: 60 },
   { min: 4400, coef: 70 },
@@ -162,7 +162,8 @@ async function postReport(client, channelId, title, entries,
   if (withPrimes) footer += ` • Total primes : ${dollars(primesTotal)}`;
   if (withRetained) {
     const retainedTotal = ok.reduce((sum, r) => sum + r.retained, 0);
-    footer += ` (${retainedTotal} retenus) • Retenus = coefficient du palier atteint depuis lundi`;
+    footer += ` (${retainedTotal} retenus) • Retenus = coefficient selon ton rythme de la semaine`
+      + ' (fixé définitivement le dimanche)';
   }
   if (errors) footer += ` • ⚠️ ${errors} VA en erreur, relancer la commande`;
 
@@ -235,11 +236,13 @@ async function collectClicks(links, getClicks, tag) {
 async function sendGamlReport(client) {
   const links = await gaml.getLinks();
   const raw = await collectClicks(links, l => gaml.getYesterdayAndWeekClicks(l.id), 'GAML');
-  // Coeff choisi lien par lien avec le cumul de la semaine en cours
+  // Coeff choisi lien par lien avec le RYTHME de la semaine en cours (cumul
+  // ramené à 7 jours) : stable toute la semaine pour un VA régulier, et égal
+  // au coeff du vrai total le dimanche (rapport du lundi = simulation Excel)
   const entries = raw.map(e => {
     if (e.clicks === null) return e;
-    const { day, week } = e.clicks;
-    const coef = coefOf(week);
+    const { day, week, days } = e.clicks;
+    const coef = coefOf(Math.round(week / days * 7));
     return {
       va: e.va, clicks: day,
       retained: applyCoef(day, coef), week, weekRetained: applyCoef(week, coef),

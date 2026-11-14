@@ -178,13 +178,16 @@ async function getCachedDayClicks(linkId, date) {
 }
 
 // Clics de la veille + cumul de sa semaine (du lundi à la veille incluse)
+// + nombre de jours écoulés (1 = lundi … 7 = dimanche)
 async function getYesterdayAndWeekClicks(linkId) {
   const yesterday = shiftDate(todayParis(), -1);
   let week = 0;
+  let days = 0;
   for (let date = mondayOf(yesterday); date <= yesterday; date = shiftDate(date, 1)) {
     week += await getCachedDayClicks(linkId, date);
+    days++;
   }
-  return { day: await getCachedDayClicks(linkId, yesterday), week };
+  return { day: await getCachedDayClicks(linkId, yesterday), week, days };
 }
 
 // Semaine précédente complète, du lundi au dimanche inclus, heure de Paris
