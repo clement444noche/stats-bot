@@ -21,27 +21,38 @@ function yesterdayLabel() {
 }
 
 // ── Grille des primes hebdo (par lien, bornes incluses) ─────────────────────
-// 0–330 clics : 0,02 $/clic ; au-delà, montant fixe par tranche
+// 0–330 clics : 0,02 $/clic ; au-delà, montant fixe par tranche.
+// coef (en %) : appliqué à TOUS les clics du lien selon le palier de ses vrais
+// clics ; la prime est ensuite lue dans la grille avec les clics retenus.
 const PRIME_TRANCHES = [
-  { min: 5000, prime: 275 },
-  { min: 4400, prime: 230 },
-  { min: 3800, prime: 190 },
-  { min: 3200, prime: 155 },
-  { min: 2600, prime: 130 },
-  { min: 2000, prime: 110 },
-  { min: 1331, prime: 85 },
-  { min: 1001, prime: 65 },
-  { min: 871, prime: 45 },
-  { min: 731, prime: 30 },
-  { min: 601, prime: 20 },
-  { min: 471, prime: 10 },
-  { min: 331, prime: 7 },
+  { min: 5000, prime: 275, coef: 60 },
+  { min: 4400, prime: 230, coef: 70 },
+  { min: 3800, prime: 190, coef: 75 },
+  { min: 3200, prime: 155, coef: 85 },
+  { min: 2600, prime: 130, coef: 85 },
+  { min: 2000, prime: 110, coef: 70 },
+  { min: 1331, prime: 85, coef: 85 },
+  { min: 1001, prime: 65, coef: 80 },
+  { min: 871, prime: 45, coef: 85 },
+  { min: 731, prime: 30, coef: 85 },
+  { min: 601, prime: 20, coef: 85 },
+  { min: 471, prime: 10, coef: 90 },
+  { min: 331, prime: 7, coef: 100 },
 ];
+
+const trancheOf = clicks => PRIME_TRANCHES.find(t => clicks >= t.min);
+
+// Clics retenus pour la prime (arrondi à l'entier inférieur, calcul en entiers)
+function retainedClicks(clicks) {
+  const coef = trancheOf(clicks)?.coef ?? 100;
+  return Math.floor(clicks * coef / 100);
+}
 
 // Prime en centimes (évite les arrondis des nombres à virgule)
 function primeCents(clicks) {
-  const tranche = PRIME_TRANCHES.find(t => clicks >= t.min);
-  return tranche ? tranche.prime * 100 : clicks * 2;
+  const retained = retainedClicks(clicks);
+  const tranche = trancheOf(retained);
+  return tranche ? tranche.prime * 100 : retained * 2;
 }
 
 function dollars(cents) {
@@ -74,6 +85,7 @@ function groupByVA(entries) {
     links: e.links,
     reasons: [...e.reasons],
     clicks: e.errors ? null : e.links.reduce((s, c) => s + c, 0),
+    retained: e.errors ? null : e.links.reduce((s, c) => s + retainedClicks(c), 0),
     prime: e.errors ? null : e.links.reduce((s, c) => s + primeCents(c), 0),
   }));
 
@@ -117,16 +129,20 @@ async function postReport(client, channelId, title, entries, { withPrimes = fals
     }
     let line = `👤 **${r.name}** → ${plural(r.clicks)}`;
     if (withPrimes) {
+      if (r.retained !== r.clicks) line += ` (${r.retained} retenus)`;
       line += ` → 💵 **${dollars(r.prime)}**`;
       if (r.links.length > 1) {
-        line += ` _(${r.links.map(c => `${c} → ${dollars(primeCents(c))}`).join(' + ')})_`;
+        line += ` _(${r.links.map(c => `${c} → ${retainedClicks(c)} → ${dollars(primeCents(c))}`).join(' + ')})_`;
       }
     }
     return line;
   });
 
   let footer = `Total équipe : ${plural(teamTotal)}`;
-  if (withPrimes) footer += ` • Total primes : ${dollars(primesTotal)}`;
+  if (withPrimes) {
+    footer += ` • Total primes : ${dollars(primesTotal)}`
+      + ' • Prime calculée sur les clics retenus (coefficient selon le palier)';
+  }
   if (errors) footer += ` • ⚠️ ${errors} VA en erreur, relancer la commande`;
 
   const embed = new EmbedBuilder()
@@ -370,10 +386,11 @@ client.on(Events.MessageCreate, async (message) => {
       const totals = Object.fromEntries(COLS.map(k => [k, sum(d => d.byCountry[k])]));
 
       const out = `${name} — lien ${link.label} — semaine du ${frDate(week.from)} au ${frDate(week.to)}\n\n`
-        + `jour       | visites |   US |  UK |  CA |  AU |  NZ |  IE | clics retenus\n`
+        + `jour       | visites |   US |  UK |  CA |  AU |  NZ |  IE | clics pays\n`
         + days.map(d => row(d.date, d.total, d.byCountry, d.target)).join('\n')
         + `\n${row('TOTAL     ', sum(d => d.total), totals, clicks)}`
-        + `\n\nPrime de ce lien : ${clicks} clics → ${dollars(prime)}`;
+        + `\n\nPrime de ce lien : ${clicks} clics × ${trancheOf(clicks)?.coef ?? 100} % `
+        + `= ${retainedClicks(clicks)} retenus → ${dollars(prime)}`;
       await message.channel.send('```\n' + out.slice(0, 1900) + '\n```');
     }
     if (links.length > 1) await message.channel.send(`💵 **Prime totale de ${name} : ${dollars(primeTotal)}**`);
