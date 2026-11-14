@@ -159,7 +159,7 @@ async function postReport(client, channelId, title, entries,
       return `👤 **${r.name}** → ❌ erreur${r.reasons.length ? ` _(${r.reasons.join(', ')})_` : ''}`;
     }
     if (retainedOnly) {
-      return `👤 **${r.name}** → ${r.retained} clics retenus • semaine : ${r.weekRetained} clics retenus`;
+      return `👤 **${r.name}** → ${plural(r.retained)} • semaine : ${plural(r.weekRetained)}`;
     }
     let line = `👤 **${r.name}** → ${plural(r.clicks)}`;
     if (withRetained) {
@@ -178,7 +178,7 @@ async function postReport(client, channelId, title, entries,
 
   let footer = `Total équipe : ${plural(teamTotal)}`;
   if (retainedOnly) {
-    footer = `Total équipe : ${ok.reduce((sum, r) => sum + r.retained, 0)} clics retenus`;
+    footer = `Total équipe : ${plural(ok.reduce((sum, r) => sum + r.retained, 0))}`;
   }
   if (withPrimes) {
     const retainedTotal = ok.reduce((sum, r) => sum + r.links.reduce((s, c) => s + retainedClicks(c), 0), 0);
