@@ -225,6 +225,7 @@ function errorReason(err) {
   const status = msg.match(/GAML (\d{3})/);
   if (status) return `GetAllMyLinks ${status[1]}`;
   if (/visites le/.test(msg)) return 'trop de visites';
+  if (/timeout|aborted/i.test(msg)) return 'GetAllMyLinks trop lent';
   if (/fetch failed|ECONN|ETIMEDOUT|socket/i.test(msg)) return 'connexion';
   return msg.slice(0, 40);
 }
@@ -243,7 +244,8 @@ async function collectClicks(links, getClicks, tag) {
       await new Promise(r => setTimeout(r, RETRY_PAUSE_MS));
     }
     const failed = [];
-    for (const link of pending) {
+    for (const [i, link] of pending.entries()) {
+      if (i % 10 === 0) console.log(`[${tag}] Passe ${pass + 1} : lien ${i + 1}/${pending.length}`);
       try {
         results.set(link.id, { va: link.va, clicks: await getClicks(link) });
       } catch (err) {
@@ -277,9 +279,12 @@ async function sendGamlReport(client) {
   await postReport(client, process.env.REPORT_CHANNEL_ID, title, entries, { withRetained: true });
 
   // Même rapport pour les VAs (#clics-va), uniquement avec les clics retenus
-  if (process.env.VA_REPORT_CHANNEL_ID) {
-    await postReport(client, process.env.VA_REPORT_CHANNEL_ID, title, entries, { retainedOnly: true });
+  if (!process.env.VA_REPORT_CHANNEL_ID) {
+    return `✅ Rapport envoyé dans <#${process.env.REPORT_CHANNEL_ID}>. `
+      + '⚠️ Rien dans #clics-va : la variable VA_REPORT_CHANNEL_ID n\'est pas définie sur Railway.';
   }
+  await postReport(client, process.env.VA_REPORT_CHANNEL_ID, title, entries, { retainedOnly: true });
+  return `✅ Rapport envoyé dans <#${process.env.REPORT_CHANNEL_ID}> et <#${process.env.VA_REPORT_CHANNEL_ID}>.`;
 }
 
 // ── Rapport compta hebdo Insta → salon compta (lundi 00h10) ─────────────────
@@ -526,7 +531,8 @@ client.on(Events.MessageCreate, async (message) => {
 
   try {
     await message.reply('⏳ Génération du rapport...');
-    await COMMANDS[command](client, message);
+    const done = await COMMANDS[command](client, message);
+    if (typeof done === 'string') await message.reply(done);
   } catch (err) {
     console.error(`[${command}] Erreur:`, err);
     await message.reply(`❌ Erreur : \`${err.message}\``);
