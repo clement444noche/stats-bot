@@ -279,12 +279,11 @@ async function sendGamlReport(client) {
   await postReport(client, process.env.REPORT_CHANNEL_ID, title, entries, { withRetained: true });
 
   // Même rapport pour les VAs (#clics-va), uniquement avec les clics retenus
+  // (pas de confirmation en cas de succès : la commande peut être tapée dans #clics-va)
   if (!process.env.VA_REPORT_CHANNEL_ID) {
-    return `✅ Rapport envoyé dans <#${process.env.REPORT_CHANNEL_ID}>. `
-      + '⚠️ Rien dans #clics-va : la variable VA_REPORT_CHANNEL_ID n\'est pas définie sur Railway.';
+    return '⚠️ Rien dans #clics-va : la variable VA_REPORT_CHANNEL_ID n\'est pas définie sur Railway.';
   }
   await postReport(client, process.env.VA_REPORT_CHANNEL_ID, title, entries, { retainedOnly: true });
-  return `✅ Rapport envoyé dans <#${process.env.REPORT_CHANNEL_ID}> et <#${process.env.VA_REPORT_CHANNEL_ID}>.`;
 }
 
 // ── Rapport compta hebdo Insta → salon compta (lundi 00h10) ─────────────────
