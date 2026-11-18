@@ -141,6 +141,15 @@ async function postReport(client, channelId, title, entries,
   { withPrimes = false, withRetained = false, retainedOnly = false } = {}) {
   const channel = await getChannel(client, channelId, title);
   const results = groupByVA(entries);
+  if (withPrimes) {
+    // Tri sur les clics retenus (ceux affichés)
+    const ret = r => r.links.reduce((s, c) => s + retainedClicks(c), 0);
+    results.sort((a, b) => {
+      if (a.clicks === null) return 1;
+      if (b.clicks === null) return -1;
+      return ret(b) - ret(a);
+    });
+  }
   if (retainedOnly) {
     results.sort((a, b) => {
       if (a.clicks === null) return 1;
@@ -161,17 +170,18 @@ async function postReport(client, channelId, title, entries,
     if (retainedOnly) {
       return `👤 **${r.name}** → ${plural(r.retained)} • semaine : ${plural(r.weekRetained)}`;
     }
+    if (withPrimes) {
+      // Compta : uniquement les clics retenus, affichés comme « clics »
+      const retained = r.links.reduce((s, c) => s + retainedClicks(c), 0);
+      let line = `👤 **${r.name}** → ${plural(retained)} → 💵 **${dollars(r.prime)}**`;
+      if (r.links.length > 1) {
+        line += ` _(${r.links.map(c => `${retainedClicks(c)} → ${dollars(primeCents(c))}`).join(' + ')})_`;
+      }
+      return line;
+    }
     let line = `👤 **${r.name}** → ${plural(r.clicks)}`;
     if (withRetained) {
       line += ` (${r.retained} retenus) • semaine : ${r.week} (${r.weekRetained} retenus)`;
-    }
-    if (withPrimes) {
-      const retained = r.links.reduce((s, c) => s + retainedClicks(c), 0);
-      if (retained !== r.clicks) line += ` (${retained} retenus)`;
-      line += ` → 💵 **${dollars(r.prime)}**`;
-      if (r.links.length > 1) {
-        line += ` _(${r.links.map(c => `${c} → ${retainedClicks(c)} → ${dollars(primeCents(c))}`).join(' + ')})_`;
-      }
     }
     return line;
   });
@@ -182,8 +192,7 @@ async function postReport(client, channelId, title, entries,
   }
   if (withPrimes) {
     const retainedTotal = ok.reduce((sum, r) => sum + r.links.reduce((s, c) => s + retainedClicks(c), 0), 0);
-    footer += ` (${retainedTotal} retenus) • Total primes : ${dollars(primesTotal)}`
-      + ' • Prime calculée sur les clics retenus';
+    footer = `Total équipe : ${plural(retainedTotal)} • Total primes : ${dollars(primesTotal)}`;
   }
   if (withRetained) {
     const retainedTotal = ok.reduce((sum, r) => sum + r.retained, 0);
